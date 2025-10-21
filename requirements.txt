@@ -1,0 +1,13 @@
+# Database & GitHub
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
+PyGithub==2.5.0
+
+# Web API & Server
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.6.0
+
+# CORS & Security
+python-multipart==0.0.17
