@@ -96,8 +96,12 @@ def root():
 @app.get("/config")
 def get_config():
     """Retourne la configuration pour le frontend"""
+    api_url = os.getenv('API_URL')
+    if not api_url:
+        api_url = f"http://{os.getenv('API_HOST', 'localhost')}:{os.getenv('API_PORT', 8000)}"
+
     return {
-        "api_url": f"http://{os.getenv('API_HOST', 'localhost')}:{os.getenv('API_PORT', 8000)}",
+        "api_url": api_url,
         "version": "1.0.0",
         "features": {
             "analytics": True,
