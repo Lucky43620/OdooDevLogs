@@ -803,9 +803,8 @@ def get_fetch_status():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Récupérer le dernier import_log
         cursor.execute("""
-            SELECT id, started_at, completed_at, status, mode, commits_imported, error_message
+            SELECT id, started_at, ended_at, status, total_commits_imported, error_message, repo_id, branch_name
             FROM odoo_devlog.import_log
             ORDER BY started_at DESC
             LIMIT 10
@@ -815,15 +814,20 @@ def get_fetch_status():
         logs = []
 
         for row in rows:
+            duration = None
+            if row[1] and row[2]:
+                duration = (row[2] - row[1]).total_seconds()
+
             logs.append({
                 "id": row[0],
                 "started_at": row[1].isoformat() if row[1] else None,
                 "completed_at": row[2].isoformat() if row[2] else None,
                 "status": row[3],
-                "mode": row[4],
-                "commits_imported": row[5],
-                "error_message": row[6],
-                "duration": (row[2] - row[1]).total_seconds() if row[1] and row[2] else None
+                "commits_imported": row[4] or 0,
+                "error_message": row[5],
+                "repo_id": row[6],
+                "branch_name": row[7],
+                "duration": duration
             })
 
         cursor.close()
@@ -834,7 +838,7 @@ def get_fetch_status():
             "last_fetch": logs[0] if logs else None
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"logs": [], "last_fetch": None, "error": str(e)}
 
 # ============================================================
 # MAIN

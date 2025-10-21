@@ -31,10 +31,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     initKeyboardShortcuts();
 
     // Charger le statut fetch si on est sur l'onglet Admin
+    let fetchStatusLoaded = false;
     const adminTab = document.querySelector('[data-tab="admin"]');
     if (adminTab) {
         adminTab.addEventListener('click', () => {
-            setTimeout(() => loadFetchStatus(), 100);
+            if (!fetchStatusLoaded) {
+                fetchStatusLoaded = true;
+                setTimeout(() => {
+                    loadFetchStatus();
+                }, 100);
+            }
         });
     }
 });
@@ -104,14 +110,7 @@ function setupEventListeners() {
         }
     });
 
-    // Modal
-    document.querySelector('.close').addEventListener('click', closeModal);
-    window.addEventListener('click', (e) => {
-        const modal = document.getElementById('commitModal');
-        if (e.target === modal) {
-            closeModal();
-        }
-    });
+    // Modal - plus besoin car géré dans le HTML avec onclick
 }
 
 // ============================================================
@@ -308,14 +307,13 @@ async function showCommitDetails(commitId) {
     const details = document.getElementById('commitDetails');
 
     details.innerHTML = '<p class="loading">Chargement des détails</p>';
-    modal.classList.add('show');
+    modal.classList.add('active');
 
     try {
         const response = await fetch(`${API_BASE_URL}/commits/${commitId}`);
         const commit = await response.json();
 
         details.innerHTML = `
-            <h2>Détails du commit</h2>
             <div style="margin: 20px 0;">
                 <div style="margin-bottom: 10px;">
                     <strong>SHA:</strong> <span class="commit-sha">${commit.sha}</span>
@@ -379,7 +377,7 @@ async function showCommitDetails(commitId) {
 }
 
 function closeModal() {
-    document.getElementById('commitModal').classList.remove('show');
+    document.getElementById('commitModal').classList.remove('active');
 }
 
 // ============================================================
@@ -443,73 +441,75 @@ async function onCompareClick() {
         const data = await response.json();
 
         results.innerHTML = `
-            <div class="branch-comparison">
-                <h3>🌿 ${data.branch1.name}</h3>
-                <div class="comparison-stats">
-                    <div class="stat-card">
-                        <div class="stat-value">${formatNumber(data.branch1.stats.total_commits)}</div>
-                        <div class="stat-label">Total commits</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${data.branch1.stats.unique_authors}</div>
-                        <div class="stat-label">Contributeurs</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value stat-add">${formatNumber(data.branch1.stats.total_additions)}</div>
-                        <div class="stat-label">Lignes ajoutées</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value stat-del">${formatNumber(data.branch1.stats.total_deletions)}</div>
-                        <div class="stat-label">Lignes supprimées</div>
-                    </div>
-                </div>
-                <h4>Commits uniques (${data.branch1.unique_commits.length})</h4>
-                <div class="unique-commits">
-                    ${data.branch1.unique_commits.map(commit => `
-                        <div class="commit-item" style="margin-bottom: 10px;">
-                            <div class="commit-sha">${commit.sha.substring(0, 7)}</div>
-                            <div class="commit-message">${escapeHtml(commit.message.split('\n')[0])}</div>
-                            <div class="commit-meta">
-                                <span>👤 ${commit.author}</span>
-                                <span>${formatDate(commit.date)}</span>
-                            </div>
+            <div class="compare-grid">
+                <div class="branch-comparison">
+                    <h3>🌿 ${data.branch1.name}</h3>
+                    <div class="comparison-stats">
+                        <div class="stat-card">
+                            <div class="stat-value">${formatNumber(data.branch1.stats.total_commits)}</div>
+                            <div class="stat-label">Total commits</div>
                         </div>
-                    `).join('')}
+                        <div class="stat-card">
+                            <div class="stat-value">${data.branch1.stats.unique_authors}</div>
+                            <div class="stat-label">Contributeurs</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value stat-add">${formatNumber(data.branch1.stats.total_additions)}</div>
+                            <div class="stat-label">Lignes ajoutées</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value stat-del">${formatNumber(data.branch1.stats.total_deletions)}</div>
+                            <div class="stat-label">Lignes supprimées</div>
+                        </div>
+                    </div>
+                    <h4>Commits uniques (${data.branch1.unique_commits.length})</h4>
+                    <div class="unique-commits">
+                        ${data.branch1.unique_commits.map(commit => `
+                            <div class="commit-item">
+                                <div class="commit-sha">${commit.sha.substring(0, 7)}</div>
+                                <div class="commit-message">${escapeHtml(commit.message.split('\n')[0])}</div>
+                                <div class="commit-meta">
+                                    <span>👤 ${commit.author}</span>
+                                    <span>${formatDate(commit.date)}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
-            </div>
 
-            <div class="branch-comparison">
-                <h3>🌿 ${data.branch2.name}</h3>
-                <div class="comparison-stats">
-                    <div class="stat-card">
-                        <div class="stat-value">${formatNumber(data.branch2.stats.total_commits)}</div>
-                        <div class="stat-label">Total commits</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${data.branch2.stats.unique_authors}</div>
-                        <div class="stat-label">Contributeurs</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value stat-add">${formatNumber(data.branch2.stats.total_additions)}</div>
-                        <div class="stat-label">Lignes ajoutées</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value stat-del">${formatNumber(data.branch2.stats.total_deletions)}</div>
-                        <div class="stat-label">Lignes supprimées</div>
-                    </div>
-                </div>
-                <h4>Commits uniques (${data.branch2.unique_commits.length})</h4>
-                <div class="unique-commits">
-                    ${data.branch2.unique_commits.map(commit => `
-                        <div class="commit-item" style="margin-bottom: 10px;">
-                            <div class="commit-sha">${commit.sha.substring(0, 7)}</div>
-                            <div class="commit-message">${escapeHtml(commit.message.split('\n')[0])}</div>
-                            <div class="commit-meta">
-                                <span>👤 ${commit.author}</span>
-                                <span>${formatDate(commit.date)}</span>
-                            </div>
+                <div class="branch-comparison">
+                    <h3>🌿 ${data.branch2.name}</h3>
+                    <div class="comparison-stats">
+                        <div class="stat-card">
+                            <div class="stat-value">${formatNumber(data.branch2.stats.total_commits)}</div>
+                            <div class="stat-label">Total commits</div>
                         </div>
-                    `).join('')}
+                        <div class="stat-card">
+                            <div class="stat-value">${data.branch2.stats.unique_authors}</div>
+                            <div class="stat-label">Contributeurs</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value stat-add">${formatNumber(data.branch2.stats.total_additions)}</div>
+                            <div class="stat-label">Lignes ajoutées</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value stat-del">${formatNumber(data.branch2.stats.total_deletions)}</div>
+                            <div class="stat-label">Lignes supprimées</div>
+                        </div>
+                    </div>
+                    <h4>Commits uniques (${data.branch2.unique_commits.length})</h4>
+                    <div class="unique-commits">
+                        ${data.branch2.unique_commits.map(commit => `
+                            <div class="commit-item">
+                                <div class="commit-sha">${commit.sha.substring(0, 7)}</div>
+                                <div class="commit-message">${escapeHtml(commit.message.split('\n')[0])}</div>
+                                <div class="commit-meta">
+                                    <span>👤 ${commit.author}</span>
+                                    <span>${formatDate(commit.date)}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
             </div>
         `;
@@ -730,52 +730,58 @@ function displayMigrationResults(data, searchTerm) {
     const uniqueModules = new Set(data.results.map(r => r.file.filename.split('/')[0])).size;
 
     resultsDiv.innerHTML = `
-        <div class="migration-summary-header">
-            <div class="migration-title-section">
-                <h3>${data.count} changement(s) trouvé(s)</h3>
-                <span class="version-badge">${data.from_version} → ${data.to_version}</span>
+        <div class="migration-summary">
+            <div class="migration-header-card">
+                <div>
+                    <h3>${data.count} changement(s) trouvé(s)</h3>
+                    <div class="version-badge">${data.from_version} → ${data.to_version}</div>
+                </div>
+                <button onclick="exportMigrationResults()" class="btn-secondary">
+                    📥 Exporter CSV
+                </button>
             </div>
-            <div class="migration-stats-quick">
-                <div class="stat-item">
-                    <div class="stat-value">${uniqueFiles}</div>
-                    <div class="stat-label">Fichiers</div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Fichiers</h3>
+                    <div class="value">${uniqueFiles}</div>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-value">${uniqueModules}</div>
-                    <div class="stat-label">Modules</div>
+                <div class="stat-card">
+                    <h3>Modules</h3>
+                    <div class="value">${uniqueModules}</div>
                 </div>
-                <div class="stat-item stat-add">
-                    <div class="stat-value">+${totalAdditions}</div>
-                    <div class="stat-label">Ajouts</div>
+                <div class="stat-card">
+                    <h3>Ajouts</h3>
+                    <div class="value stat-add">+${totalAdditions}</div>
                 </div>
-                <div class="stat-item stat-del">
-                    <div class="stat-value">-${totalDeletions}</div>
-                    <div class="stat-label">Suppressions</div>
+                <div class="stat-card">
+                    <h3>Suppressions</h3>
+                    <div class="value stat-del">-${totalDeletions}</div>
                 </div>
             </div>
-            <button onclick="exportMigrationResults()" class="btn-secondary" style="font-size: 0.9rem;">
-                Exporter CSV
-            </button>
         </div>
+
         <div class="migration-results-list">
             ${data.results.map((result, index) => {
                 const detectedChange = analyzeChange(result.file.patch, searchTerm);
                 return `
-                <div class="migration-result-item">
-                    <div class="migration-result-header">
+                <div class="migration-result-card">
+                    <div class="migration-card-header">
                         <div>
-                            <strong>${result.file.filename}</strong>
-                            <span class="file-status status-${result.file.status}">${result.file.status}</span>
-                        </div>
-                        <div style="font-size: 0.85rem; color: var(--text-secondary);">
-                            ${result.commit.branch}
+                            <div class="migration-filename">${result.file.filename}</div>
+                            <div class="migration-meta">
+                                <span class="tag">${result.file.status}</span>
+                                <span>${result.commit.branch}</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="migration-result-commit">
+
+                    <div class="migration-commit-info">
                         <span class="commit-sha">${result.commit.sha.substring(0, 7)}</span>
-                        ${escapeHtml(result.commit.message.split('\n')[0])}
+                        <span>${escapeHtml(result.commit.message.split('\n')[0])}</span>
                     </div>
-                    <div style="display: flex; gap: 10px; margin-top: 10px; font-size: 0.85rem; color: var(--text-secondary);">
+
+                    <div class="migration-stats">
                         <span>👤 ${result.commit.author || 'Unknown'}</span>
                         <span>📅 ${formatDate(result.commit.date)}</span>
                         <span class="stat-add">+${result.file.additions}</span>
@@ -783,35 +789,27 @@ function displayMigrationResults(data, searchTerm) {
                     </div>
 
                     ${detectedChange ? `
-                        <div class="detected-change-summary">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                                <strong>Changement détecté:</strong>
-                                <button onclick="copyToClipboard('${escapeHtml(detectedChange.old)}\\n→\\n${escapeHtml(detectedChange.new)}')" class="btn-copy" title="Copier">
-                                    📋 Copier
-                                </button>
+                        <div class="diff-comparison">
+                            <div class="diff-version">
+                                <div class="diff-version-title">${data.from_version}</div>
+                                <div class="diff-version-content">${escapeHtml(detectedChange.old)}</div>
                             </div>
-                            <div class="change-comparison">
-                                <div class="change-side">
-                                    <div class="change-label">${data.from_version}</div>
-                                    <div class="change-old">${escapeHtml(detectedChange.old)}</div>
-                                </div>
-                                <div class="change-arrow">→</div>
-                                <div class="change-side">
-                                    <div class="change-label">${data.to_version}</div>
-                                    <div class="change-new">${escapeHtml(detectedChange.new)}</div>
-                                </div>
+                            <div class="diff-version">
+                                <div class="diff-version-title">${data.to_version}</div>
+                                <div class="diff-version-content">${escapeHtml(detectedChange.new)}</div>
                             </div>
                         </div>
                     ` : ''}
 
-                    <div style="display: flex; gap: 10px; margin-top: 15px;">
-                        <button onclick="showMigrationDiff(${index})" class="btn-secondary">
+                    <div class="migration-actions">
+                        <button onclick="showMigrationDiff(${index})" class="btn">
                             Voir le diff complet
                         </button>
-                        <button onclick="copyDiff(${index})" class="btn-copy">
-                            📋 Copier le diff
+                        <button onclick="copyDiff(${index})" class="btn-secondary">
+                            📋 Copier
                         </button>
                     </div>
+
                     <div class="diff-viewer" id="migration-diff-${index}">
                         ${highlightSearchTerm(renderDiffSideBySide(result.file.patch, data.from_version, data.to_version), searchTerm)}
                     </div>
@@ -1660,14 +1658,27 @@ async function triggerFetch(mode) {
         if (response.ok) {
             showNotification(data.message, 'success');
 
+            // Stopper l'interval existant s'il y en a un
+            if (window.fetchStatusInterval) {
+                clearInterval(window.fetchStatusInterval);
+            }
+
+            // Afficher le bouton stop
+            const stopBtn = document.getElementById('stopIntervalBtn');
+            if (stopBtn) stopBtn.style.display = 'inline-block';
+
             // Attendre 2 secondes puis recharger le statut
             setTimeout(() => {
                 loadFetchStatus();
                 // Recharger toutes les 5 secondes pendant 30 secondes
-                const interval = setInterval(() => {
+                window.fetchStatusInterval = setInterval(() => {
                     loadFetchStatus();
                 }, 5000);
-                setTimeout(() => clearInterval(interval), 30000);
+                setTimeout(() => {
+                    clearInterval(window.fetchStatusInterval);
+                    window.fetchStatusInterval = null;
+                    if (stopBtn) stopBtn.style.display = 'none';
+                }, 30000);
             }, 2000);
         } else {
             showNotification('Erreur lors du démarrage du fetch', 'error');
@@ -1726,38 +1737,43 @@ async function loadFetchStatus() {
         }
 
         // Afficher l'historique
-        if (historyDiv && data.logs && data.logs.length > 0) {
-            historyDiv.innerHTML = `
-                <div style="display: flex; flex-direction: column; gap: 10px;">
-                    ${data.logs.map((log, index) => {
-                        const success = log.status === 'completed';
-                        return `
-                            <div style="padding: 15px; border: 1px solid var(--color-gray-200); background: ${success ? 'var(--color-white)' : 'var(--color-gray-50)'};">
-                                <div style="display: flex; justify-content: space-between; align-items: start;">
-                                    <div>
-                                        <span class="status-badge status-${log.status}">${log.status}</span>
-                                        <span style="margin-left: 10px; font-size: 13px; color: var(--color-gray-600);">
-                                            ${log.mode || 'incremental'}
-                                        </span>
-                                    </div>
-                                    <div style="text-align: right; font-size: 13px; color: var(--color-gray-600);">
-                                        ${formatDate(log.started_at)}
-                                    </div>
+        if (historyDiv) {
+            if (data.logs && data.logs.length > 0) {
+                historyDiv.innerHTML = `
+                    <div class="history-list">
+                        ${data.logs.map(log => `
+                            <div class="history-item">
+                                <div class="history-item-header">
+                                    <span class="history-item-status">${log.status}</span>
+                                    <span class="history-item-time">${formatDate(log.started_at)}</span>
                                 </div>
-                                <div style="margin-top: 10px; font-size: 14px;">
-                                    <strong>${log.commits_imported || 0}</strong> commits importés
-                                    ${log.duration ? `en <strong>${Math.round(log.duration)}s</strong>` : ''}
+                                <div class="history-item-details">
+                                    ${log.branch_name || 'N/A'} •
+                                    <strong>${log.commits_imported || 0}</strong> commits
+                                    ${log.duration ? ` • ${Math.round(log.duration)}s` : ''}
                                 </div>
                             </div>
-                        `;
-                    }).join('')}
-                </div>
-            `;
+                        `).join('')}
+                    </div>
+                `;
+            } else {
+                historyDiv.innerHTML = '<p class="info-text">Aucun historique disponible</p>';
+            }
         }
     } catch (error) {
         console.error('Erreur lors du chargement du statut:', error);
         if (statusDiv) {
             statusDiv.innerHTML = '<p class="info-text">Erreur lors du chargement du statut</p>';
         }
+    }
+}
+
+function stopFetchInterval() {
+    if (window.fetchStatusInterval) {
+        clearInterval(window.fetchStatusInterval);
+        window.fetchStatusInterval = null;
+        const stopBtn = document.getElementById('stopIntervalBtn');
+        if (stopBtn) stopBtn.style.display = 'none';
+        showNotification('Suivi automatique arrêté', 'info');
     }
 }

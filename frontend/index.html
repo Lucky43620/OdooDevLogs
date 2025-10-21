@@ -69,17 +69,36 @@
             <h2>Liste des Commits</h2>
 
             <div class="filters">
-                <select id="repoSelect" class="filter-select">
-                    <option value="">Sélectionner un dépôt...</option>
-                </select>
-                <select id="branchSelect" class="filter-select" disabled>
-                    <option value="">Sélectionner une branche...</option>
-                </select>
-                <select id="commitTypeFilter" class="filter-select">
-                    <option value="">Tous les types...</option>
-                </select>
-                <input type="text" id="searchInput" placeholder="Rechercher dans les messages..." class="filter-input">
-                <input type="text" id="authorFilter" placeholder="Filtrer par auteur..." class="filter-input">
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label>Dépôt</label>
+                        <select id="repoSelect">
+                            <option value="">Sélectionner...</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Branche</label>
+                        <select id="branchSelect" disabled>
+                            <option value="">Sélectionner...</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Type de commit</label>
+                        <select id="commitTypeFilter">
+                            <option value="">Tous...</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label>Rechercher</label>
+                        <input type="text" id="searchInput" placeholder="Rechercher dans les messages...">
+                    </div>
+                    <div class="filter-group">
+                        <label>Auteur</label>
+                        <input type="text" id="authorFilter" placeholder="Filtrer par auteur...">
+                    </div>
+                </div>
             </div>
 
             <div id="commitsList" class="commits-list">
@@ -93,33 +112,37 @@
         <div id="compare" class="tab-content">
             <h2>Comparer deux branches</h2>
 
-            <div class="compare-form">
-                <div class="form-group">
-                    <label>Dépôt:</label>
-                    <select id="compareRepoSelect" class="filter-select">
-                        <option value="">Sélectionner un dépôt...</option>
-                    </select>
-                </div>
-
-                <div class="branches-select-container">
-                    <div class="form-group">
-                        <label>Branche 1:</label>
-                        <select id="compareBranch1" class="filter-select" disabled>
-                            <option value="">Sélectionner...</option>
-                        </select>
-                    </div>
-
-                    <div class="compare-icon">VS</div>
-
-                    <div class="form-group">
-                        <label>Branche 2:</label>
-                        <select id="compareBranch2" class="filter-select" disabled>
+            <div class="filters">
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label>Dépôt</label>
+                        <select id="compareRepoSelect">
                             <option value="">Sélectionner...</option>
                         </select>
                     </div>
                 </div>
 
-                <button id="compareBtn" class="btn-primary" disabled>Comparer</button>
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label>Branche 1</label>
+                        <select id="compareBranch1" disabled>
+                            <option value="">Sélectionner...</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group" style="flex: 0; margin-top: 25px; text-align: center; font-weight: 700; font-size: 1.2rem;">VS</div>
+
+                    <div class="filter-group">
+                        <label>Branche 2</label>
+                        <select id="compareBranch2" disabled>
+                            <option value="">Sélectionner...</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group" style="flex: 0; margin-top: 25px;">
+                        <button id="compareBtn" class="btn" disabled>Comparer</button>
+                    </div>
+                </div>
             </div>
 
             <div id="compareResults" class="compare-results"></div>
@@ -128,45 +151,60 @@
         <!-- Migration Tab -->
         <div id="migration" class="tab-content">
             <h2>Migration Helper</h2>
-            <p class="info-text" style="margin-bottom: 30px;">Recherchez des changements de champs, méthodes ou modules entre les versions Odoo</p>
+            <p style="color: var(--gray-600); margin-bottom: 20px;">Recherchez des changements de champs, méthodes ou modules entre les versions Odoo</p>
 
-            <div class="migration-search">
-                <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
-                    <input type="text" id="migrationSearch" placeholder="Rechercher un champ, méthode, classe... (ex: 'invoice_id', 'def compute_tax')" class="filter-input" style="font-size: 1.1rem; padding: 15px; flex: 1;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; white-space: nowrap;">
-                        <input type="checkbox" id="migrationRegex" style="width: 18px; height: 18px; cursor: pointer;">
-                        <span>Regex</span>
-                    </label>
+            <div class="filters">
+                <div class="filter-row">
+                    <div class="filter-group" style="flex: 2;">
+                        <label>Recherche</label>
+                        <input type="text" id="migrationSearch" placeholder="Champ, méthode, classe... (ex: 'invoice_id')">
+                    </div>
+                    <div class="checkbox-group" style="flex: 0; margin-top: 25px;">
+                        <input type="checkbox" id="migrationRegex">
+                        <label style="margin: 0;">Regex</label>
+                    </div>
                 </div>
 
-                <div class="filters" style="margin-top: 20px;">
-                    <select id="migrationFromVersion" class="filter-select">
-                        <option value="">Version source...</option>
-                        <option value="16.0">16.0</option>
-                        <option value="17.0">17.0</option>
-                        <option value="18.0">18.0</option>
-                    </select>
-                    <select id="migrationToVersion" class="filter-select">
-                        <option value="">Version cible...</option>
-                        <option value="17.0">17.0</option>
-                        <option value="18.0">18.0</option>
-                        <option value="master">master</option>
-                    </select>
-                    <select id="migrationModule" class="filter-select">
-                        <option value="">Tous les modules...</option>
-                        <option value="account">account</option>
-                        <option value="sale">sale</option>
-                        <option value="purchase">purchase</option>
-                        <option value="stock">stock</option>
-                        <option value="hr">hr</option>
-                    </select>
-                    <select id="migrationCommitType" class="filter-select">
-                        <option value="">Tous les types...</option>
-                    </select>
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label>Version Source</label>
+                        <select id="migrationFromVersion">
+                            <option value="">Sélectionner...</option>
+                            <option value="16.0">16.0</option>
+                            <option value="17.0">17.0</option>
+                            <option value="18.0">18.0</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Version Cible</label>
+                        <select id="migrationToVersion">
+                            <option value="">Sélectionner...</option>
+                            <option value="17.0">17.0</option>
+                            <option value="18.0">18.0</option>
+                            <option value="master">master</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Module</label>
+                        <select id="migrationModule">
+                            <option value="">Tous...</option>
+                            <option value="account">account</option>
+                            <option value="sale">sale</option>
+                            <option value="purchase">purchase</option>
+                            <option value="stock">stock</option>
+                            <option value="hr">hr</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Type de commit</label>
+                        <select id="migrationCommitType">
+                            <option value="">Tous...</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
-            <div id="migrationResults" class="migration-results">
+            <div id="migrationResults">
                 <p class="info-text">Entrez un terme de recherche pour trouver les changements entre versions</p>
             </div>
         </div>
@@ -184,63 +222,87 @@
             <h2>Analytics Avancées</h2>
 
             <!-- Timeline Graph -->
-            <div class="analytics-section">
+            <div class="chart-container">
                 <h3>Timeline des commits</h3>
-                <div class="filters" style="margin-bottom: 20px;">
-                    <select id="timelineRepo" class="filter-select">
-                        <option value="">Sélectionner un dépôt...</option>
-                    </select>
-                    <select id="timelineBranch" class="filter-select" disabled>
-                        <option value="">Sélectionner une branche...</option>
-                    </select>
-                    <select id="timelineRange" class="filter-select">
-                        <option value="7">7 derniers jours</option>
-                        <option value="30" selected>30 derniers jours</option>
-                        <option value="90">90 derniers jours</option>
-                        <option value="365">1 an</option>
-                    </select>
+                <div class="filters">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>Dépôt</label>
+                            <select id="timelineRepo">
+                                <option value="">Sélectionner...</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Branche</label>
+                            <select id="timelineBranch" disabled>
+                                <option value="">Sélectionner...</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Période</label>
+                            <select id="timelineRange">
+                                <option value="7">7 derniers jours</option>
+                                <option value="30" selected>30 derniers jours</option>
+                                <option value="90">90 derniers jours</option>
+                                <option value="365">1 an</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 <div id="timelineGraph" class="timeline-graph"></div>
             </div>
 
             <!-- Module Analytics -->
-            <div class="analytics-section" style="margin-top: 40px;">
+            <div class="chart-container">
                 <h3>Analyse par Module</h3>
-                <div class="filters" style="margin-bottom: 20px;">
-                    <select id="moduleAnalyticsBranch" class="filter-select">
-                        <option value="">Sélectionner une branche...</option>
-                        <option value="16.0">16.0</option>
-                        <option value="17.0">17.0</option>
-                        <option value="18.0">18.0</option>
-                        <option value="master">master</option>
-                    </select>
+                <div class="filters">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>Branche</label>
+                            <select id="moduleAnalyticsBranch">
+                                <option value="">Sélectionner...</option>
+                                <option value="16.0">16.0</option>
+                                <option value="17.0">17.0</option>
+                                <option value="18.0">18.0</option>
+                                <option value="master">master</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 <div id="moduleAnalytics" class="module-analytics"></div>
             </div>
 
             <!-- Detected Changes -->
-            <div class="analytics-section" style="margin-top: 40px;">
+            <div class="chart-container">
                 <h3>Changements Détectés</h3>
-                <p class="info-text" style="margin-bottom: 20px;">
+                <p style="color: var(--gray-600); margin-bottom: 20px;">
                     Analyse automatique des changements importants (renommages, suppressions, modifications de signature)
                 </p>
-                <div class="filters" style="margin-bottom: 20px;">
-                    <select id="detectedChangesBranch" class="filter-select">
-                        <option value="">Sélectionner une branche...</option>
-                        <option value="16.0">16.0</option>
-                        <option value="17.0">17.0</option>
-                        <option value="18.0">18.0</option>
-                        <option value="master">master</option>
-                    </select>
-                    <select id="detectedChangesType" class="filter-select">
-                        <option value="">Tous les types...</option>
-                        <option value="field_renamed">Champs renommés</option>
-                        <option value="method_renamed">Méthodes renommées</option>
-                        <option value="class_renamed">Classes renommées</option>
-                        <option value="field_removed">Champs supprimés</option>
-                        <option value="method_removed">Méthodes supprimées</option>
-                        <option value="signature_changed">Signatures modifiées</option>
-                    </select>
+                <div class="filters">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>Branche</label>
+                            <select id="detectedChangesBranch">
+                                <option value="">Sélectionner...</option>
+                                <option value="16.0">16.0</option>
+                                <option value="17.0">17.0</option>
+                                <option value="18.0">18.0</option>
+                                <option value="master">master</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Type de changement</label>
+                            <select id="detectedChangesType">
+                                <option value="">Tous...</option>
+                                <option value="field_renamed">Champs renommés</option>
+                                <option value="method_renamed">Méthodes renommées</option>
+                                <option value="class_renamed">Classes renommées</option>
+                                <option value="field_removed">Champs supprimés</option>
+                                <option value="method_removed">Méthodes supprimées</option>
+                                <option value="signature_changed">Signatures modifiées</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 <div id="detectedChanges" class="detected-changes"></div>
             </div>
@@ -250,46 +312,49 @@
         <div id="admin" class="tab-content">
             <h2>Administration</h2>
 
-            <!-- Fetch Management -->
-            <div class="admin-section">
+            <div class="admin-card">
                 <h3>Gestion des Imports</h3>
-                <p class="info-text">Actualiser les commits depuis GitHub</p>
+                <p style="color: var(--gray-600); margin-bottom: 20px;">Actualiser les commits depuis GitHub</p>
 
                 <div class="admin-controls">
-                    <button onclick="triggerFetch('incremental')" class="btn-admin btn-primary">
-                        <span class="btn-icon">↻</span>
-                        Import Incrémental
+                    <button onclick="triggerFetch('incremental')" class="btn">
+                        ↻ Import Incrémental
                     </button>
-                    <button onclick="triggerFetch('full')" class="btn-admin btn-secondary">
-                        <span class="btn-icon">⟳</span>
-                        Import Complet
+                    <button onclick="triggerFetch('full')" class="btn-secondary">
+                        ⟳ Import Complet
                     </button>
-                    <button onclick="loadFetchStatus()" class="btn-admin btn-ghost">
-                        <span class="btn-icon">📊</span>
-                        Rafraîchir le statut
+                    <button onclick="loadFetchStatus()" class="btn-secondary">
+                        📊 Rafraîchir
+                    </button>
+                    <button onclick="stopFetchInterval()" class="btn-secondary" id="stopIntervalBtn" style="display: none;">
+                        ⏹ Arrêter le suivi
                     </button>
                 </div>
 
-                <div id="fetchStatus" class="fetch-status">
-                    <p class="info-text">Chargement du statut...</p>
+                <div id="fetchStatus" class="admin-status">
+                    <p class="loading">Chargement du statut</p>
                 </div>
             </div>
 
-            <!-- Import History -->
-            <div class="admin-section" style="margin-top: 30px;">
+            <div class="admin-card">
                 <h3>Historique des Imports</h3>
-                <div id="fetchHistory" class="fetch-history">
-                    <p class="info-text">Chargement...</p>
+                <div id="fetchHistory">
+                    <p class="loading">Chargement</p>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Modal pour détails commit -->
-    <div id="commitModal" class="modal">
+    <div id="commitModal" class="modal" onclick="if(event.target === this) closeModal()">
         <div class="modal-content">
-            <span class="close">&times;</span>
-            <div id="commitDetails"></div>
+            <div class="modal-header">
+                <h2>Détails du commit</h2>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="commitDetails"></div>
+            </div>
         </div>
     </div>
 
