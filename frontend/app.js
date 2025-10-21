@@ -1,24 +1,34 @@
-// Configuration de l'API
-const API_BASE_URL = 'http://localhost:8000';
+// Configuration de l'API - chargée dynamiquement
+let API_BASE_URL = window.getApiUrl ? window.getApiUrl() : 'http://localhost:8000';
 
 // État de l'application
 let state = {
     currentPage: 0,
     currentBranch: null,
     repositories: [],
-    branches: []
+    branches: [],
+    config: null,
+    searchHistory: JSON.parse(localStorage.getItem('searchHistory') || '[]'),
+    favorites: JSON.parse(localStorage.getItem('favorites') || '[]')
 };
 
 // ============================================================
 // INITIALISATION
 // ============================================================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // Charger la config d'abord
+    if (window.loadConfig) {
+        state.config = await window.loadConfig();
+        API_BASE_URL = window.getApiUrl();
+    }
+
     initTabs();
     loadDashboard();
     loadRepositories();
     loadCommitTypes();
     loadModules();
     setupEventListeners();
+    initKeyboardShortcuts();
 });
 
 // ============================================================
@@ -682,6 +692,9 @@ async function searchMigrationChanges() {
         const response = await fetch(url);
         const data = await response.json();
 
+        // Ajouter à l'historique
+        addToSearchHistory(searchTerm, fromVersion, toVersion);
+
         displayMigrationResults(data, searchTerm);
     } catch (error) {
         console.error('Erreur lors de la recherche:', error);
@@ -702,15 +715,39 @@ function displayMigrationResults(data, searchTerm) {
         return;
     }
 
+    // Calculer des statistiques
+    const totalAdditions = data.results.reduce((sum, r) => sum + r.file.additions, 0);
+    const totalDeletions = data.results.reduce((sum, r) => sum + r.file.deletions, 0);
+    const uniqueFiles = new Set(data.results.map(r => r.file.filename)).size;
+    const uniqueModules = new Set(data.results.map(r => r.file.filename.split('/')[0])).size;
+
     resultsDiv.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h3>${data.count} résultat(s) trouvé(s)</h3>
-            <div style="display: flex; gap: 15px; align-items: center;">
-                <button onclick="exportMigrationResults()" class="btn-secondary" style="font-size: 0.9rem;">
-                    Exporter CSV
-                </button>
-                <span style="color: var(--text-secondary);">${data.from_version} → ${data.to_version}</span>
+        <div class="migration-summary-header">
+            <div class="migration-title-section">
+                <h3>${data.count} changement(s) trouvé(s)</h3>
+                <span class="version-badge">${data.from_version} → ${data.to_version}</span>
             </div>
+            <div class="migration-stats-quick">
+                <div class="stat-item">
+                    <div class="stat-value">${uniqueFiles}</div>
+                    <div class="stat-label">Fichiers</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">${uniqueModules}</div>
+                    <div class="stat-label">Modules</div>
+                </div>
+                <div class="stat-item stat-add">
+                    <div class="stat-value">+${totalAdditions}</div>
+                    <div class="stat-label">Ajouts</div>
+                </div>
+                <div class="stat-item stat-del">
+                    <div class="stat-value">-${totalDeletions}</div>
+                    <div class="stat-label">Suppressions</div>
+                </div>
+            </div>
+            <button onclick="exportMigrationResults()" class="btn-secondary" style="font-size: 0.9rem;">
+                Exporter CSV
+            </button>
         </div>
         <div class="migration-results-list">
             ${data.results.map((result, index) => {
@@ -739,7 +776,12 @@ function displayMigrationResults(data, searchTerm) {
 
                     ${detectedChange ? `
                         <div class="detected-change-summary">
-                            <strong>Changement détecté:</strong>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <strong>Changement détecté:</strong>
+                                <button onclick="copyToClipboard('${escapeHtml(detectedChange.old)}\\n→\\n${escapeHtml(detectedChange.new)}')" class="btn-copy" title="Copier">
+                                    📋 Copier
+                                </button>
+                            </div>
                             <div class="change-comparison">
                                 <div class="change-side">
                                     <div class="change-label">${data.from_version}</div>
@@ -754,9 +796,14 @@ function displayMigrationResults(data, searchTerm) {
                         </div>
                     ` : ''}
 
-                    <button onclick="showMigrationDiff(${index})" class="btn-secondary" style="margin-top: 10px;">
-                        Voir le diff complet
-                    </button>
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <button onclick="showMigrationDiff(${index})" class="btn-secondary">
+                            Voir le diff complet
+                        </button>
+                        <button onclick="copyDiff(${index})" class="btn-copy">
+                            📋 Copier le diff
+                        </button>
+                    </div>
                     <div class="diff-viewer" id="migration-diff-${index}">
                         ${highlightSearchTerm(renderDiffSideBySide(result.file.patch, data.from_version, data.to_version), searchTerm)}
                     </div>
@@ -772,6 +819,44 @@ function displayMigrationResults(data, searchTerm) {
 function showMigrationDiff(index) {
     const diffViewer = document.getElementById(`migration-diff-${index}`);
     diffViewer.classList.toggle('show');
+}
+
+function copyDiff(index) {
+    if (!window.migrationResults || !window.migrationResults[index]) return;
+
+    const result = window.migrationResults[index];
+    const patch = result.file.patch || '';
+
+    copyToClipboard(patch);
+}
+
+function copyToClipboard(text) {
+    // Nettoyer le texte des caractères d'échappement HTML
+    text = text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#x27;/g, "'");
+
+    navigator.clipboard.writeText(text).then(() => {
+        // Notification visuelle
+        showNotification('Copié dans le presse-papiers!', 'success');
+    }).catch(err => {
+        console.error('Erreur lors de la copie:', err);
+        showNotification('Erreur lors de la copie', 'error');
+    });
+}
+
+function showNotification(message, type = 'success') {
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type}`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+
+    setTimeout(() => {
+        notification.classList.add('show');
+    }, 10);
+
+    setTimeout(() => {
+        notification.classList.remove('show');
+        setTimeout(() => notification.remove(), 300);
+    }, 2000);
 }
 
 function highlightSearchTerm(html, term) {
@@ -1263,4 +1348,290 @@ function displayDetectedChanges(data) {
 // Initialiser les listeners pour Analytics quand le document est prêt
 document.addEventListener('DOMContentLoaded', () => {
     setupAnalyticsListeners();
+});
+
+// ============================================================
+// RACCOURCIS CLAVIER
+// ============================================================
+function initKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Ctrl/Cmd + K: Focus sur la recherche
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            const searchInput = document.getElementById('migrationSearch');
+            if (searchInput) {
+                searchInput.focus();
+                searchInput.select();
+            }
+        }
+
+        // Ctrl/Cmd + E: Export
+        if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
+            e.preventDefault();
+            if (window.migrationResults && window.migrationResults.length > 0) {
+                exportMigrationResults();
+            }
+        }
+
+        // Escape: Fermer les modals/diffs
+        if (e.key === 'Escape') {
+            const openDiffs = document.querySelectorAll('.diff-viewer.show');
+            openDiffs.forEach(diff => diff.classList.remove('show'));
+            closeModal();
+        }
+
+        // Ctrl/Cmd + H: Afficher l'historique de recherche
+        if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
+            e.preventDefault();
+            showSearchHistory();
+        }
+
+        // Ctrl/Cmd + B: Afficher les favoris
+        if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+            e.preventDefault();
+            showFavorites();
+        }
+    });
+
+    // Afficher les raccourcis disponibles
+    console.log(`
+🎹 Raccourcis clavier disponibles:
+  • Ctrl/Cmd + K : Focus recherche
+  • Ctrl/Cmd + E : Export CSV
+  • Ctrl/Cmd + H : Historique
+  • Ctrl/Cmd + B : Favoris
+  • Escape : Fermer
+    `);
+}
+
+// ============================================================
+// HISTORIQUE DE RECHERCHE
+// ============================================================
+function addToSearchHistory(searchTerm, fromVersion, toVersion) {
+    const entry = {
+        term: searchTerm,
+        fromVersion,
+        toVersion,
+        timestamp: new Date().toISOString()
+    };
+
+    // Éviter les doublons
+    state.searchHistory = state.searchHistory.filter(
+        h => !(h.term === searchTerm && h.fromVersion === fromVersion && h.toVersion === toVersion)
+    );
+
+    state.searchHistory.unshift(entry);
+    state.searchHistory = state.searchHistory.slice(0, 20); // Garder 20 max
+
+    localStorage.setItem('searchHistory', JSON.stringify(state.searchHistory));
+}
+
+function showSearchHistory() {
+    if (state.searchHistory.length === 0) {
+        showNotification('Aucun historique de recherche', 'info');
+        return;
+    }
+
+    const modal = document.getElementById('commitModal');
+    const details = document.getElementById('commitDetails');
+
+    details.innerHTML = `
+        <h2>Historique de recherche</h2>
+        <div style="max-height: 500px; overflow-y: auto;">
+            ${state.searchHistory.map((entry, index) => `
+                <div class="history-item" onclick="replaySearch(${index})">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong style="color: var(--primary-color); font-size: 1.1rem;">${escapeHtml(entry.term)}</strong>
+                            <div style="font-size: 0.9rem; color: var(--text-secondary); margin-top: 5px;">
+                                ${entry.fromVersion} → ${entry.toVersion}
+                            </div>
+                        </div>
+                        <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                            ${formatDate(entry.timestamp)}
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+        <button onclick="clearSearchHistory()" class="btn-secondary" style="margin-top: 20px;">
+            Effacer l'historique
+        </button>
+    `;
+
+    modal.style.display = 'block';
+}
+
+function replaySearch(index) {
+    const entry = state.searchHistory[index];
+
+    // Aller dans l'onglet Migration
+    document.querySelector('[data-tab="migration"]').click();
+
+    // Remplir les champs
+    document.getElementById('migrationSearch').value = entry.term;
+    document.getElementById('migrationFromVersion').value = entry.fromVersion;
+    document.getElementById('migrationToVersion').value = entry.toVersion;
+
+    // Fermer le modal
+    closeModal();
+
+    // Lancer la recherche
+    setTimeout(() => searchMigrationChanges(), 300);
+}
+
+function clearSearchHistory() {
+    state.searchHistory = [];
+    localStorage.removeItem('searchHistory');
+    closeModal();
+    showNotification('Historique effacé', 'success');
+}
+
+// ============================================================
+// FAVORIS / BOOKMARKS
+// ============================================================
+function addToFavorites(commitId, commitData) {
+    const favorite = {
+        id: commitId,
+        sha: commitData.sha,
+        message: commitData.message,
+        author: commitData.author,
+        date: commitData.date,
+        timestamp: new Date().toISOString()
+    };
+
+    // Éviter les doublons
+    state.favorites = state.favorites.filter(f => f.id !== commitId);
+    state.favorites.unshift(favorite);
+
+    localStorage.setItem('favorites', JSON.stringify(state.favorites));
+    showNotification('Ajouté aux favoris', 'success');
+}
+
+function showFavorites() {
+    if (state.favorites.length === 0) {
+        showNotification('Aucun favori enregistré', 'info');
+        return;
+    }
+
+    const modal = document.getElementById('commitModal');
+    const details = document.getElementById('commitDetails');
+
+    details.innerHTML = `
+        <h2>Favoris</h2>
+        <div style="max-height: 500px; overflow-y: auto;">
+            ${state.favorites.map((fav, index) => `
+                <div class="favorite-item">
+                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div style="flex: 1;">
+                            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                                <span class="commit-sha">${fav.sha.substring(0, 7)}</span>
+                                <strong style="color: var(--text-primary);">${escapeHtml(fav.message.split('\n')[0])}</strong>
+                            </div>
+                            <div style="font-size: 0.9rem; color: var(--text-secondary);">
+                                ${fav.author} • ${formatDate(fav.date)}
+                            </div>
+                        </div>
+                        <button onclick="removeFavorite(${index})" class="btn-copy" style="background: var(--danger-color); border-color: var(--danger-color);">
+                            ✕
+                        </button>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+
+    modal.style.display = 'block';
+}
+
+function removeFavorite(index) {
+    state.favorites.splice(index, 1);
+    localStorage.setItem('favorites', JSON.stringify(state.favorites));
+    showFavorites(); // Rafraîchir
+    showNotification('Retiré des favoris', 'success');
+}
+
+// ============================================================
+// SUGGESTIONS INTELLIGENTES
+// ============================================================
+function initSmartSuggestions() {
+    const searchInput = document.getElementById('migrationSearch');
+    if (!searchInput) return;
+
+    // Créer le conteneur de suggestions
+    const suggestionsDiv = document.createElement('div');
+    suggestionsDiv.id = 'smartSuggestions';
+    suggestionsDiv.className = 'smart-suggestions';
+    searchInput.parentNode.insertBefore(suggestionsDiv, searchInput.nextSibling);
+
+    searchInput.addEventListener('input', debounce(showSuggestions, 300));
+    searchInput.addEventListener('focus', () => {
+        if (searchInput.value.length >= 2) showSuggestions();
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!searchInput.contains(e.target) && !suggestionsDiv.contains(e.target)) {
+            suggestionsDiv.style.display = 'none';
+        }
+    });
+}
+
+function showSuggestions() {
+    const searchInput = document.getElementById('migrationSearch');
+    const suggestionsDiv = document.getElementById('smartSuggestions');
+    const term = searchInput.value.trim();
+
+    if (term.length < 2) {
+        suggestionsDiv.style.display = 'none';
+        return;
+    }
+
+    // Suggestions basées sur les recherches populaires Odoo
+    const commonOdooFields = [
+        'invoice_id', 'move_id', 'partner_id', 'product_id',
+        'sale_order_id', 'purchase_order_id', 'account_id',
+        'company_id', 'user_id', 'state', 'date', 'amount_total',
+        'tax_ids', 'line_ids', 'payment_state', 'currency_id'
+    ];
+
+    const commonMethods = [
+        'def _compute_', 'def _onchange_', 'def action_',
+        'def create', 'def write', 'def unlink',
+        '@api.depends', '@api.onchange', '@api.model'
+    ];
+
+    const suggestions = [
+        ...commonOdooFields.filter(f => f.toLowerCase().includes(term.toLowerCase())),
+        ...commonMethods.filter(m => m.toLowerCase().includes(term.toLowerCase())),
+        ...state.searchHistory.map(h => h.term).filter(t => t.toLowerCase().includes(term.toLowerCase()))
+    ].slice(0, 8);
+
+    if (suggestions.length === 0) {
+        suggestionsDiv.style.display = 'none';
+        return;
+    }
+
+    suggestionsDiv.innerHTML = suggestions.map(s => `
+        <div class="suggestion-item" onclick="applySuggestion('${escapeHtml(s)}')">
+            ${highlightTerm(s, term)}
+        </div>
+    `).join('');
+
+    suggestionsDiv.style.display = 'block';
+}
+
+function applySuggestion(suggestion) {
+    document.getElementById('migrationSearch').value = suggestion;
+    document.getElementById('smartSuggestions').style.display = 'none';
+    searchMigrationChanges();
+}
+
+function highlightTerm(text, term) {
+    const regex = new RegExp(`(${escapeRegex(term)})`, 'gi');
+    return escapeHtml(text).replace(regex, '<strong style="color: var(--primary-color);">$1</strong>');
+}
+
+// Initialiser les suggestions
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(initSmartSuggestions, 500);
 });

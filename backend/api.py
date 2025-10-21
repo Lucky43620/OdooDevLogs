@@ -93,6 +93,19 @@ def root():
         "version": "1.0.0"
     }
 
+@app.get("/config")
+def get_config():
+    """Retourne la configuration pour le frontend"""
+    return {
+        "api_url": f"http://{os.getenv('API_HOST', 'localhost')}:{os.getenv('API_PORT', 8000)}",
+        "version": "1.0.0",
+        "features": {
+            "analytics": True,
+            "export": True,
+            "regex_search": True
+        }
+    }
+
 @app.get("/repositories", response_model=List[Repository])
 def get_repositories():
     """Liste tous les dépôts"""
