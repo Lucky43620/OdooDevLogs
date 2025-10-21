@@ -20,8 +20,8 @@
             <button class="tab-btn" data-tab="commits">Commits</button>
             <button class="tab-btn" data-tab="migration">Migration</button>
             <button class="tab-btn" data-tab="compare">Comparer</button>
-            <button class="tab-btn" data-tab="stats">Statistiques</button>
             <button class="tab-btn" data-tab="analytics">Analytics</button>
+            <button class="tab-btn" data-tab="admin">Admin</button>
         </nav>
 
         <!-- Dashboard Tab -->
@@ -243,6 +243,44 @@
                     </select>
                 </div>
                 <div id="detectedChanges" class="detected-changes"></div>
+            </div>
+        </div>
+
+        <!-- Admin Tab -->
+        <div id="admin" class="tab-content">
+            <h2>Administration</h2>
+
+            <!-- Fetch Management -->
+            <div class="admin-section">
+                <h3>Gestion des Imports</h3>
+                <p class="info-text">Actualiser les commits depuis GitHub</p>
+
+                <div class="admin-controls">
+                    <button onclick="triggerFetch('incremental')" class="btn-admin btn-primary">
+                        <span class="btn-icon">↻</span>
+                        Import Incrémental
+                    </button>
+                    <button onclick="triggerFetch('full')" class="btn-admin btn-secondary">
+                        <span class="btn-icon">⟳</span>
+                        Import Complet
+                    </button>
+                    <button onclick="loadFetchStatus()" class="btn-admin btn-ghost">
+                        <span class="btn-icon">📊</span>
+                        Rafraîchir le statut
+                    </button>
+                </div>
+
+                <div id="fetchStatus" class="fetch-status">
+                    <p class="info-text">Chargement du statut...</p>
+                </div>
+            </div>
+
+            <!-- Import History -->
+            <div class="admin-section" style="margin-top: 30px;">
+                <h3>Historique des Imports</h3>
+                <div id="fetchHistory" class="fetch-history">
+                    <p class="info-text">Chargement...</p>
+                </div>
             </div>
         </div>
     </div>

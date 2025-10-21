@@ -762,6 +762,77 @@ def get_detected_changes(
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================
+# ADMIN / FETCH MANAGEMENT
+# ============================================================
+@app.post("/admin/fetch")
+async def trigger_fetch(mode: str = Query("incremental", regex="^(incremental|full)$")):
+    """Déclenche un fetch des commits"""
+    import subprocess
+    import sys
+
+    try:
+        script_path = os.path.join(os.path.dirname(__file__), "..", "scripts", "fetch_commits.py")
+
+        # Lancer le script en arrière-plan
+        if mode == "full":
+            process = subprocess.Popen([sys.executable, script_path, "full"],
+                                      stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE)
+        else:
+            process = subprocess.Popen([sys.executable, script_path],
+                                      stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE)
+
+        return {
+            "status": "started",
+            "mode": mode,
+            "pid": process.pid,
+            "message": f"Fetch {mode} démarré en arrière-plan"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors du lancement du fetch: {str(e)}")
+
+@app.get("/admin/fetch-status")
+def get_fetch_status():
+    """Retourne le statut du dernier fetch"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Récupérer le dernier import_log
+        cursor.execute("""
+            SELECT id, started_at, completed_at, status, mode, commits_imported, error_message
+            FROM odoo_devlog.import_log
+            ORDER BY started_at DESC
+            LIMIT 10
+        """)
+
+        rows = cursor.fetchall()
+        logs = []
+
+        for row in rows:
+            logs.append({
+                "id": row[0],
+                "started_at": row[1].isoformat() if row[1] else None,
+                "completed_at": row[2].isoformat() if row[2] else None,
+                "status": row[3],
+                "mode": row[4],
+                "commits_imported": row[5],
+                "error_message": row[6],
+                "duration": (row[2] - row[1]).total_seconds() if row[1] and row[2] else None
+            })
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "logs": logs,
+            "last_fetch": logs[0] if logs else None
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================
 # MAIN
 # ============================================================
 if __name__ == "__main__":

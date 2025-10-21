@@ -1,5 +1,5 @@
-// Configuration de l'API - chargée dynamiquement
-let API_BASE_URL = window.getApiUrl ? window.getApiUrl() : 'http://localhost:8000';
+// Configuration de l'API - utilise window.API_BASE_URL défini dans config.js
+let API_BASE_URL = window.API_BASE_URL || 'http://localhost:8000';
 
 // État de l'application
 let state = {
@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Charger la config d'abord
     if (window.loadConfig) {
         state.config = await window.loadConfig();
-        API_BASE_URL = window.getApiUrl();
+        API_BASE_URL = window.API_BASE_URL; // Mise à jour après chargement config
     }
 
     initTabs();
@@ -29,6 +29,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadModules();
     setupEventListeners();
     initKeyboardShortcuts();
+
+    // Charger le statut fetch si on est sur l'onglet Admin
+    const adminTab = document.querySelector('[data-tab="admin"]');
+    if (adminTab) {
+        adminTab.addEventListener('click', () => {
+            setTimeout(() => loadFetchStatus(), 100);
+        });
+    }
 });
 
 // ============================================================
@@ -1635,3 +1643,121 @@ function highlightTerm(text, term) {
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(initSmartSuggestions, 500);
 });
+
+// ============================================================
+// ADMIN PANEL - FETCH MANAGEMENT
+// ============================================================
+async function triggerFetch(mode) {
+    try {
+        showNotification(`Lancement du fetch ${mode}...`, 'info');
+
+        const response = await fetch(`${API_BASE_URL}/admin/fetch?mode=${mode}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showNotification(data.message, 'success');
+
+            // Attendre 2 secondes puis recharger le statut
+            setTimeout(() => {
+                loadFetchStatus();
+                // Recharger toutes les 5 secondes pendant 30 secondes
+                const interval = setInterval(() => {
+                    loadFetchStatus();
+                }, 5000);
+                setTimeout(() => clearInterval(interval), 30000);
+            }, 2000);
+        } else {
+            showNotification('Erreur lors du démarrage du fetch', 'error');
+        }
+    } catch (error) {
+        console.error('Erreur:', error);
+        showNotification('Erreur de connexion à l\'API', 'error');
+    }
+}
+
+async function loadFetchStatus() {
+    const statusDiv = document.getElementById('fetchStatus');
+    const historyDiv = document.getElementById('fetchHistory');
+
+    if (!statusDiv) return;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/fetch-status`);
+        const data = await response.json();
+
+        // Afficher le statut actuel
+        if (data.last_fetch) {
+            const lastFetch = data.last_fetch;
+            const isRunning = lastFetch.status === 'running';
+
+            statusDiv.innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
+                    <div>
+                        <div style="font-size: 12px; color: var(--color-gray-600); margin-bottom: 5px;">STATUT</div>
+                        <span class="status-badge status-${lastFetch.status}">${lastFetch.status}</span>
+                    </div>
+                    <div>
+                        <div style="font-size: 12px; color: var(--color-gray-600); margin-bottom: 5px;">MODE</div>
+                        <strong>${lastFetch.mode || 'incremental'}</strong>
+                    </div>
+                    <div>
+                        <div style="font-size: 12px; color: var(--color-gray-600); margin-bottom: 5px;">COMMITS IMPORTÉS</div>
+                        <strong>${lastFetch.commits_imported || 0}</strong>
+                    </div>
+                </div>
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--color-gray-200);">
+                    <div style="font-size: 12px; color: var(--color-gray-600);">DERNIER IMPORT</div>
+                    <div style="margin-top: 5px;">
+                        ${formatDate(lastFetch.started_at)}
+                        ${lastFetch.duration ? `• Durée: ${Math.round(lastFetch.duration)}s` : ''}
+                    </div>
+                    ${lastFetch.error_message ? `
+                        <div style="margin-top: 10px; padding: 10px; background: var(--color-gray-100); border: 1px dashed var(--color-black);">
+                            <strong>Erreur:</strong> ${escapeHtml(lastFetch.error_message)}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        } else {
+            statusDiv.innerHTML = '<p class="info-text">Aucun import trouvé</p>';
+        }
+
+        // Afficher l'historique
+        if (historyDiv && data.logs && data.logs.length > 0) {
+            historyDiv.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    ${data.logs.map((log, index) => {
+                        const success = log.status === 'completed';
+                        return `
+                            <div style="padding: 15px; border: 1px solid var(--color-gray-200); background: ${success ? 'var(--color-white)' : 'var(--color-gray-50)'};">
+                                <div style="display: flex; justify-content: space-between; align-items: start;">
+                                    <div>
+                                        <span class="status-badge status-${log.status}">${log.status}</span>
+                                        <span style="margin-left: 10px; font-size: 13px; color: var(--color-gray-600);">
+                                            ${log.mode || 'incremental'}
+                                        </span>
+                                    </div>
+                                    <div style="text-align: right; font-size: 13px; color: var(--color-gray-600);">
+                                        ${formatDate(log.started_at)}
+                                    </div>
+                                </div>
+                                <div style="margin-top: 10px; font-size: 14px;">
+                                    <strong>${log.commits_imported || 0}</strong> commits importés
+                                    ${log.duration ? `en <strong>${Math.round(log.duration)}s</strong>` : ''}
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Erreur lors du chargement du statut:', error);
+        if (statusDiv) {
+            statusDiv.innerHTML = '<p class="info-text">Erreur lors du chargement du statut</p>';
+        }
+    }
+}
