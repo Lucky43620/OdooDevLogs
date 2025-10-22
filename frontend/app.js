@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadCommitTypes();
     loadMigrationVersions();
     loadModules();
+    loadAdminReposAndBranches();
     setupEventListeners();
     initKeyboardShortcuts();
     checkSyncStatus();
@@ -234,6 +235,7 @@ async function loadCommits() {
     const author = document.getElementById('authorFilter').value;
     const commitType = document.getElementById('commitTypeFilter').value;
     const fileExtension = document.getElementById('commitFileExtension').value;
+    const module = document.getElementById('commitModule').value;
     const offset = state.currentPage * 100;
 
     const container = document.getElementById('commitsList');
@@ -244,6 +246,7 @@ async function loadCommits() {
         if (search) url += `&search=${encodeURIComponent(search)}`;
         if (author) url += `&author=${encodeURIComponent(author)}`;
         if (commitType) url += `&search=${encodeURIComponent('[' + commitType + ']')}`;
+        if (module) url += `&module=${encodeURIComponent(module)}`;
 
         const response = await fetch(url);
         let commits = await response.json();
@@ -736,76 +739,116 @@ async function loadMigrationVersions() {
     }
 }
 
+let modulesData = [];
+
 async function loadModules() {
-    const cacheKey = 'odoo_modules_cache';
-    const cacheExpiry = 'odoo_modules_cache_expiry';
-    const cacheDuration = 24 * 60 * 60 * 1000;
-
     try {
-        const cachedModules = localStorage.getItem(cacheKey);
-        const cachedExpiry = localStorage.getItem(cacheExpiry);
+        const response = await fetch(`${API_BASE_URL}/modules`);
+        const modules = await response.json();
+        modulesData = modules.map(m => m.name);
+        console.log(`✅ ${modulesData.length} modules chargés`);
+        setupModuleAutocomplete();
+        setupCommitModuleAutocomplete();
+    } catch (error) {
+        console.error('Erreur lors du chargement des modules:', error);
+        modulesData = [];
+    }
+}
 
-        if (cachedModules && cachedExpiry && Date.now() < parseInt(cachedExpiry)) {
-            const modules = JSON.parse(cachedModules);
-            const moduleSelect = document.getElementById('migrationModule');
-            moduleSelect.innerHTML = '<option value="">Tous les modules...</option>' +
-                modules.map(m => `<option value="${m}">${m}</option>`).join('');
-            console.log('✅ Modules chargés depuis le cache');
+function setupModuleAutocomplete() {
+    const input = document.getElementById('migrationModule');
+    const suggestionsDiv = document.getElementById('moduleSuggestions');
+
+    if (!input || !suggestionsDiv) return;
+
+    input.addEventListener('input', (e) => {
+        const value = e.target.value.toLowerCase();
+
+        if (value.length < 1) {
+            suggestionsDiv.style.display = 'none';
             return;
         }
 
-        const response = await fetch(`${API_BASE_URL}/repositories`);
-        const repos = await response.json();
+        const filtered = modulesData
+            .filter(m => m.toLowerCase().includes(value))
+            .slice(0, 20);
 
-        if (repos.length === 0) return;
-
-        const branchesResponse = await fetch(`${API_BASE_URL}/repositories/${repos[0].id}/branches`);
-        const branches = await branchesResponse.json();
-
-        if (branches.length === 0) return;
-
-        const commitsResponse = await fetch(`${API_BASE_URL}/branches/${branches[0].id}/commits?limit=500`);
-        const commits = await commitsResponse.json();
-
-        const modulesSet = new Set();
-
-        const batchSize = 10;
-        for (let i = 0; i < commits.length && modulesSet.size < 100; i += batchSize) {
-            const batch = commits.slice(i, i + batchSize);
-            const promises = batch.map(commit =>
-                fetch(`${API_BASE_URL}/commits/${commit.id}`)
-                    .then(res => res.json())
-                    .catch(err => null)
-            );
-
-            const details = await Promise.all(promises);
-
-            details.forEach(detail => {
-                if (!detail) return;
-                detail.files_changed.forEach(file => {
-                    const parts = file.filename.split('/');
-                    if (parts.length > 0 && parts[0]) {
-                        modulesSet.add(parts[0]);
-                    }
-                });
-            });
+        if (filtered.length === 0) {
+            suggestionsDiv.style.display = 'none';
+            return;
         }
 
-        const modules = Array.from(modulesSet).sort();
+        suggestionsDiv.innerHTML = filtered
+            .map(m => `<div class="suggestion-item" onclick="selectModule('${m}')">${m}</div>`)
+            .join('');
+        suggestionsDiv.style.display = 'block';
+    });
 
-        localStorage.setItem(cacheKey, JSON.stringify(modules));
-        localStorage.setItem(cacheExpiry, (Date.now() + cacheDuration).toString());
+    input.addEventListener('blur', () => {
+        setTimeout(() => {
+            suggestionsDiv.style.display = 'none';
+        }, 200);
+    });
 
-        const moduleSelect = document.getElementById('migrationModule');
-        moduleSelect.innerHTML = '<option value="">Tous les modules...</option>' +
-            modules.map(m => `<option value="${m}">${m}</option>`).join('');
+    input.addEventListener('focus', (e) => {
+        if (e.target.value.length > 0) {
+            e.target.dispatchEvent(new Event('input'));
+        }
+    });
+}
 
-        console.log(`✅ ${modules.length} modules chargés et mis en cache`);
-    } catch (error) {
-        console.error('Erreur lors du chargement des modules:', error);
-        const moduleSelect = document.getElementById('migrationModule');
-        moduleSelect.innerHTML = '<option value="">Tous les modules...</option>';
-    }
+function selectModule(moduleName) {
+    const input = document.getElementById('migrationModule');
+    input.value = moduleName;
+    document.getElementById('moduleSuggestions').style.display = 'none';
+}
+
+function setupCommitModuleAutocomplete() {
+    const input = document.getElementById('commitModule');
+    const suggestionsDiv = document.getElementById('commitModuleSuggestions');
+
+    if (!input || !suggestionsDiv) return;
+
+    input.addEventListener('input', (e) => {
+        const value = e.target.value.toLowerCase();
+
+        if (value.length < 1) {
+            suggestionsDiv.style.display = 'none';
+            return;
+        }
+
+        const filtered = modulesData
+            .filter(m => m.toLowerCase().includes(value))
+            .slice(0, 20);
+
+        if (filtered.length === 0) {
+            suggestionsDiv.style.display = 'none';
+            return;
+        }
+
+        suggestionsDiv.innerHTML = filtered
+            .map(m => `<div class="suggestion-item" onclick="selectCommitModule('${m}')">${m}</div>`)
+            .join('');
+        suggestionsDiv.style.display = 'block';
+    });
+
+    input.addEventListener('blur', () => {
+        setTimeout(() => {
+            suggestionsDiv.style.display = 'none';
+        }, 200);
+    });
+
+    input.addEventListener('focus', (e) => {
+        if (e.target.value.length > 0) {
+            e.target.dispatchEvent(new Event('input'));
+        }
+    });
+}
+
+function selectCommitModule(moduleName) {
+    const input = document.getElementById('commitModule');
+    input.value = moduleName;
+    document.getElementById('commitModuleSuggestions').style.display = 'none';
 }
 
 // ============================================================
@@ -1103,9 +1146,15 @@ function copyToClipboard(text) {
 }
 
 function showNotification(message, type = 'success') {
+    const existingNotifications = document.querySelectorAll('.notification');
+    existingNotifications.forEach((notif, index) => {
+        notif.style.bottom = `${(index + 1) * 70 + 20}px`;
+    });
+
     const notification = document.createElement('div');
     notification.className = `notification notification-${type}`;
     notification.textContent = message;
+    notification.style.bottom = '20px';
     document.body.appendChild(notification);
 
     setTimeout(() => {
@@ -1114,7 +1163,13 @@ function showNotification(message, type = 'success') {
 
     setTimeout(() => {
         notification.classList.remove('show');
-        setTimeout(() => notification.remove(), 300);
+        setTimeout(() => {
+            notification.remove();
+            const remainingNotifs = document.querySelectorAll('.notification');
+            remainingNotifs.forEach((notif, index) => {
+                notif.style.bottom = `${index * 70 + 20}px`;
+            });
+        }, 300);
     }, 2000);
 }
 
@@ -1342,11 +1397,24 @@ function setupAnalyticsListeners() {
     document.getElementById('detectedChangesBranch').addEventListener('change', loadDetectedChanges);
     document.getElementById('detectedChangesType').addEventListener('change', loadDetectedChanges);
 
-    // Populate timeline repo select
+    // Populate timeline repo select and branches
     loadRepositories().then(() => {
         const timelineSelect = document.getElementById('timelineRepo');
         const repoSelect = document.getElementById('repoSelect');
         timelineSelect.innerHTML = repoSelect.innerHTML;
+    });
+
+    loadMigrationVersions().then(() => {
+        const moduleAnalyticsBranch = document.getElementById('moduleAnalyticsBranch');
+        const detectedChangesBranch = document.getElementById('detectedChangesBranch');
+        const fromVersionSelect = document.getElementById('migrationFromVersion');
+
+        if (fromVersionSelect && moduleAnalyticsBranch) {
+            moduleAnalyticsBranch.innerHTML = fromVersionSelect.innerHTML;
+        }
+        if (fromVersionSelect && detectedChangesBranch) {
+            detectedChangesBranch.innerHTML = fromVersionSelect.innerHTML;
+        }
     });
 }
 
@@ -1406,45 +1474,47 @@ function displayTimelineGraph(data) {
     // Trouver la valeur max pour normaliser les barres
     const maxCommits = Math.max(...data.timeline.map(d => d.commit_count));
 
-    const html = `
-        <div style="margin-bottom: 20px;">
-            <h4 style="color: var(--text-secondary);">Activité des ${data.days} derniers jours</h4>
-        </div>
-        <div class="timeline-bar">
-            ${data.timeline.reverse().map(day => {
-                const height = (day.commit_count / maxCommits) * 100;
-                const dateObj = new Date(day.date);
-                const dateLabel = dateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+    const totalCommits = data.timeline.reduce((sum, d) => sum + d.commit_count, 0);
+    const totalAdditions = data.timeline.reduce((sum, d) => sum + d.total_additions, 0);
+    const totalDeletions = data.timeline.reduce((sum, d) => sum + d.total_deletions, 0);
 
-                return `
-                    <div class="timeline-column">
-                        <div class="timeline-bar-item" style="height: ${height}%;" title="${day.commit_count} commits">
-                            <span class="timeline-value">${day.commit_count} commits<br>+${day.total_additions} -${day.total_deletions}</span>
-                        </div>
-                        <small class="timeline-label">${dateLabel}</small>
-                    </div>
-                `;
-            }).join('')}
-        </div>
-        <div style="margin-top: 30px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
-            <div style="background: var(--darker-bg); padding: 15px; border-radius: 6px; text-align: center;">
-                <div style="font-size: 1.5rem; font-weight: bold; color: var(--primary-color);">
-                    ${data.timeline.reduce((sum, d) => sum + d.commit_count, 0)}
-                </div>
-                <div style="color: var(--text-secondary); font-size: 0.9rem;">Total Commits</div>
-            </div>
-            <div style="background: var(--darker-bg); padding: 15px; border-radius: 6px; text-align: center;">
-                <div style="font-size: 1.5rem; font-weight: bold; color: var(--success-color);">
-                    +${data.timeline.reduce((sum, d) => sum + d.total_additions, 0).toLocaleString()}
-                </div>
-                <div style="color: var(--text-secondary); font-size: 0.9rem;">Lignes ajoutées</div>
-            </div>
-            <div style="background: var(--darker-bg); padding: 15px; border-radius: 6px; text-align: center;">
-                <div style="font-size: 1.5rem; font-weight: bold; color: var(--danger-color);">
-                    -${data.timeline.reduce((sum, d) => sum + d.total_deletions, 0).toLocaleString()}
-                </div>
-                <div style="color: var(--text-secondary); font-size: 0.9rem;">Lignes supprimées</div>
-            </div>
+    const html = `
+        <div style="background: var(--white); border: 1px solid var(--gray-200); margin-bottom: 20px; overflow: hidden;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: var(--gray-100); border-bottom: 2px solid var(--black);">
+                        <th style="padding: 12px 15px; text-align: left; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">Date</th>
+                        <th style="padding: 12px 15px; text-align: center; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">Commits</th>
+                        <th style="padding: 12px 15px; text-align: center; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">Ajouts</th>
+                        <th style="padding: 12px 15px; text-align: center; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">Suppressions</th>
+                        <th style="padding: 12px 15px; text-align: center; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">Auteurs</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.timeline.reverse().map((day, index) => {
+                        const dateObj = new Date(day.date);
+                        const dateLabel = dateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+                        const bgColor = index % 2 === 0 ? 'var(--white)' : 'var(--gray-50)';
+
+                        return `
+                            <tr style="background: ${bgColor}; border-bottom: 1px solid var(--gray-200); transition: background 0.2s;">
+                                <td style="padding: 12px 15px; font-weight: 500;">${dateLabel}</td>
+                                <td style="padding: 12px 15px; text-align: center; font-weight: 600; color: var(--black);">${day.commit_count}</td>
+                                <td style="padding: 12px 15px; text-align: center; font-weight: 600; color: var(--green);">+${day.total_additions.toLocaleString()}</td>
+                                <td style="padding: 12px 15px; text-align: center; font-weight: 600; color: var(--red);">-${day.total_deletions.toLocaleString()}</td>
+                                <td style="padding: 12px 15px; text-align: center; font-weight: 600;">${day.author_count}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                    <tr style="background: var(--black); color: var(--white); font-weight: 700;">
+                        <td style="padding: 15px; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">TOTAL</td>
+                        <td style="padding: 15px; text-align: center; font-size: 1.1rem;">${totalCommits}</td>
+                        <td style="padding: 15px; text-align: center; font-size: 1.1rem; color: var(--green);">+${totalAdditions.toLocaleString()}</td>
+                        <td style="padding: 15px; text-align: center; font-size: 1.1rem; color: var(--red);">-${totalDeletions.toLocaleString()}</td>
+                        <td style="padding: 15px; text-align: center;"></td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     `;
 
@@ -1465,6 +1535,9 @@ async function loadModuleAnalytics() {
     try {
         const response = await fetch(`${API_BASE_URL}/analytics/modules?branch_name=${branch}`);
         const data = await response.json();
+
+        console.log('Analytics response:', data);
+        console.log('Modules count:', data.modules ? data.modules.length : 0);
 
         displayModuleAnalytics(data);
     } catch (error) {
@@ -1492,35 +1565,37 @@ function displayModuleAnalytics(data) {
         </div>
     `;
 
-    const html = data.modules.map(module => `
-        <div class="module-card">
-            <h4>${module.module}</h4>
-            <div class="module-stat">
-                <span class="module-stat-label">Commits</span>
-                <span class="module-stat-value">${module.commits}</span>
-            </div>
-            <div class="module-stat">
-                <span class="module-stat-label">Contributeurs</span>
-                <span class="module-stat-value">${module.contributors}</span>
-            </div>
-            <div class="module-stat">
-                <span class="module-stat-label">Lignes ajoutées</span>
-                <span class="module-stat-value stat-add">+${module.additions.toLocaleString()}</span>
-            </div>
-            <div class="module-stat">
-                <span class="module-stat-label">Lignes supprimées</span>
-                <span class="module-stat-value stat-del">-${module.deletions.toLocaleString()}</span>
-            </div>
-            ${module.last_modified ? `
-                <div class="module-stat">
-                    <span class="module-stat-label">Dernière modif</span>
-                    <span class="module-stat-value">${formatDate(module.last_modified)}</span>
-                </div>
-            ` : ''}
+    const html = `
+        <div style="background: var(--white); border: 1px solid var(--gray-200); overflow: hidden;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: var(--gray-100); border-bottom: 2px solid var(--black);">
+                        <th style="padding: 12px 15px; text-align: left; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">Module</th>
+                        <th style="padding: 12px 15px; text-align: center; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">Commits</th>
+                        <th style="padding: 12px 15px; text-align: center; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">Contributeurs</th>
+                        <th style="padding: 12px 15px; text-align: center; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">Ajouts</th>
+                        <th style="padding: 12px 15px; text-align: center; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.85rem;">Suppressions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.modules.map((module, index) => {
+                        const bgColor = index % 2 === 0 ? 'var(--white)' : 'var(--gray-50)';
+                        return `
+                            <tr style="background: ${bgColor}; border-bottom: 1px solid var(--gray-200);" onmouseover="this.style.background='var(--gray-100)'" onmouseout="this.style.background='${bgColor}'">
+                                <td style="padding: 12px 15px; font-weight: 600; font-family: 'Courier New', monospace; font-size: 0.9rem;">${module.module}</td>
+                                <td style="padding: 12px 15px; text-align: center; font-weight: 600;">${module.commits}</td>
+                                <td style="padding: 12px 15px; text-align: center; font-weight: 600;">${module.contributors}</td>
+                                <td style="padding: 12px 15px; text-align: center; font-weight: 600; color: var(--green);">+${module.additions.toLocaleString()}</td>
+                                <td style="padding: 12px 15px; text-align: center; font-weight: 600; color: var(--red);">-${module.deletions.toLocaleString()}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
         </div>
-    `).join('');
+    `;
 
-    analyticsDiv.innerHTML = exportBtn + '<div class="module-analytics">' + html + '</div>';
+    analyticsDiv.innerHTML = exportBtn + html;
 }
 
 async function loadDetectedChanges() {
@@ -2005,12 +2080,14 @@ document.addEventListener('DOMContentLoaded', () => {
 // ============================================================
 // ADMIN PANEL - FETCH MANAGEMENT
 // ============================================================
-let syncEventSource = null;
+let pollingInterval = null;
+let logPosition = 0;
 
 async function triggerFetch(mode) {
     try {
         const incrementalBtn = document.getElementById('incrementalBtn');
         const fullBtn = document.getElementById('fullBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
 
         incrementalBtn.disabled = true;
         fullBtn.disabled = true;
@@ -2050,6 +2127,9 @@ async function triggerFetch(mode) {
         if (data.status === 'already_running') {
             showNotification(data.message, 'warning');
             addTerminalLine(data.message, 'warning');
+            incrementalBtn.disabled = false;
+            fullBtn.disabled = false;
+            cancelBtn.style.display = 'inline-block';
             return;
         }
 
@@ -2058,6 +2138,7 @@ async function triggerFetch(mode) {
             showNotification('Synchronisation démarrée', 'success');
             addTerminalLine(`✅ Synchronisation démarrée (PID: ${data.pid})`, 'success');
 
+            cancelBtn.style.display = 'inline-block';
             startStreamingLogs();
 
         } else {
@@ -2093,41 +2174,105 @@ function hideSyncIndicator() {
     }
 }
 
+let pollingErrorCount = 0;
+
 function startStreamingLogs() {
-    if (syncEventSource) {
-        syncEventSource.close();
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
     }
 
-    syncEventSource = new EventSource(`${API_BASE_URL}/admin/fetch-stream`);
+    logPosition = 0;
+    pollingErrorCount = 0;
 
-    syncEventSource.onmessage = (event) => {
+    pollingInterval = setInterval(async () => {
         try {
-            const data = JSON.parse(event.data);
-            addTerminalLine(data.message, data.type);
+            const response = await fetch(`${API_BASE_URL}/admin/fetch-logs?last_position=${logPosition}`);
 
-            if (data.type === 'complete') {
-                syncEventSource.close();
-                syncEventSource = null;
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            pollingErrorCount = 0;
+
+            if (data.logs && data.logs.length > 0) {
+                data.logs.forEach(log => {
+                    addTerminalLine(log.message, log.type);
+                });
+                logPosition = data.position;
+            }
+
+            if (data.completed) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
                 hideSyncIndicator();
-                document.getElementById('incrementalBtn').disabled = false;
-                document.getElementById('fullBtn').disabled = false;
+                const incrementalBtn = document.getElementById('incrementalBtn');
+                const fullBtn = document.getElementById('fullBtn');
+                const cancelBtn = document.getElementById('cancelBtn');
+                if (incrementalBtn) incrementalBtn.disabled = false;
+                if (fullBtn) fullBtn.disabled = false;
+                if (cancelBtn) cancelBtn.style.display = 'none';
                 showNotification('Synchronisation terminée', 'success');
+                addTerminalLine('', 'info');
+                addTerminalLine('✅ Synchronisation terminée', 'success');
                 loadFetchStatus();
             }
-        } catch (err) {
-            console.error('Erreur parsing SSE:', err);
-        }
-    };
+        } catch (error) {
+            console.error('Erreur polling logs:', error);
+            pollingErrorCount++;
 
-    syncEventSource.onerror = (error) => {
-        console.error('Erreur SSE:', error);
-        syncEventSource.close();
-        syncEventSource = null;
-        hideSyncIndicator();
-        addTerminalLine('❌ Connexion au stream interrompue', 'error');
-        document.getElementById('incrementalBtn').disabled = false;
-        document.getElementById('fullBtn').disabled = false;
-    };
+            if (pollingErrorCount >= 5) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+                hideSyncIndicator();
+                addTerminalLine('❌ Erreur répétée lors de la récupération des logs', 'error');
+                addTerminalLine('ℹ️  La synchronisation continue en arrière-plan', 'info');
+                const incrementalBtn = document.getElementById('incrementalBtn');
+                const fullBtn = document.getElementById('fullBtn');
+                const cancelBtn = document.getElementById('cancelBtn');
+                if (incrementalBtn) incrementalBtn.disabled = false;
+                if (fullBtn) fullBtn.disabled = false;
+                if (cancelBtn) cancelBtn.style.display = 'none';
+            }
+        }
+    }, 500);
+}
+
+function stopPolling() {
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+    }
+    hideSyncIndicator();
+    const incrementalBtn = document.getElementById('incrementalBtn');
+    const fullBtn = document.getElementById('fullBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+    if (incrementalBtn) incrementalBtn.disabled = false;
+    if (fullBtn) fullBtn.disabled = false;
+    if (cancelBtn) cancelBtn.style.display = 'none';
+}
+
+async function cancelSync() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/cancel-fetch`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            stopPolling();
+            showNotification('Synchronisation annulée', 'info');
+            addTerminalLine('⚠️  Synchronisation annulée par l\'utilisateur', 'warning');
+        } else {
+            showNotification('Impossible d\'annuler la synchronisation', 'error');
+            addTerminalLine(`❌ Erreur: ${data.detail || 'Erreur inconnue'}`, 'error');
+        }
+    } catch (error) {
+        console.error('Erreur lors de l\'annulation:', error);
+        showNotification('Erreur lors de l\'annulation', 'error');
+        addTerminalLine(`❌ Erreur: ${error.message}`, 'error');
+    }
 }
 
 function addTerminalLine(message, type = 'info') {
@@ -2149,6 +2294,47 @@ function clearTerminal() {
     }
 }
 
+async function loadAdminReposAndBranches() {
+    try {
+        const reposResponse = await fetch(`${API_BASE_URL}/repositories`);
+        const repos = await reposResponse.json();
+
+        const repoSelect = document.getElementById('adminRepoSelect');
+        if (repoSelect && repos.length > 0) {
+            repoSelect.innerHTML = repos.map(repo =>
+                `<option value="${repo.full_name}" selected>${repo.full_name}</option>`
+            ).join('');
+        }
+
+        const allBranches = new Set();
+        for (const repo of repos) {
+            const branchesResponse = await fetch(`${API_BASE_URL}/repositories/${repo.id}/branches`);
+            const branches = await branchesResponse.json();
+            branches.forEach(branch => allBranches.add(branch.name));
+        }
+
+        const branchSelect = document.getElementById('adminBranchSelect');
+        if (branchSelect && allBranches.size > 0) {
+            const sortedBranches = Array.from(allBranches).sort((a, b) => {
+                const aNum = parseFloat(a);
+                const bNum = parseFloat(b);
+                if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
+                if (a === 'master') return 1;
+                if (b === 'master') return -1;
+                return a.localeCompare(b);
+            });
+
+            branchSelect.innerHTML = sortedBranches.map(branch =>
+                `<option value="${branch}" selected>${branch}</option>`
+            ).join('');
+        }
+
+        console.log(`✅ Chargé ${repos.length} repos et ${allBranches.size} branches pour Admin`);
+    } catch (error) {
+        console.error('Erreur chargement repos/branches Admin:', error);
+    }
+}
+
 async function checkSyncStatus() {
     try {
         const response = await fetch(`${API_BASE_URL}/admin/fetch-running`);
@@ -2156,8 +2342,11 @@ async function checkSyncStatus() {
 
         if (data.running) {
             showSyncIndicator();
-            addTerminalLine('⚠️  Une synchronisation est en cours (détectée au chargement)', 'warning');
-            startStreamingLogs();
+            const terminalBody = document.getElementById('terminalBody');
+            if (terminalBody) {
+                addTerminalLine('⚠️  Une synchronisation est en cours (détectée au chargement)', 'warning');
+                startStreamingLogs();
+            }
         }
     } catch (error) {
         console.error('Erreur vérification sync:', error);

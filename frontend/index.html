@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Odoo DevLogs - Visualisation des commits</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/x-icon" href="favicon/favicon.ico">
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon/favicon-16x16.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon/favicon-32x32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png">
+    <link rel="manifest" href="favicon/site.webmanifest">
 </head>
 <body>
     <div class="container">
@@ -97,6 +102,11 @@
                     <div class="filter-group">
                         <label>Auteur</label>
                         <input type="text" id="authorFilter" placeholder="Filtrer par auteur...">
+                    </div>
+                    <div class="filter-group" style="position: relative;">
+                        <label>Module</label>
+                        <input type="text" id="commitModule" placeholder="Filtrer par module..." autocomplete="off">
+                        <div id="commitModuleSuggestions" class="suggestions-list" style="display: none;"></div>
                     </div>
                     <div class="filter-group">
                         <label>Extension fichier</label>
@@ -193,16 +203,10 @@
                             <option value="">Sélectionner...</option>
                         </select>
                     </div>
-                    <div class="filter-group">
+                    <div class="filter-group" style="position: relative;">
                         <label>Module</label>
-                        <select id="migrationModule">
-                            <option value="">Tous...</option>
-                            <option value="account">account</option>
-                            <option value="sale">sale</option>
-                            <option value="purchase">purchase</option>
-                            <option value="stock">stock</option>
-                            <option value="hr">hr</option>
-                        </select>
+                        <input type="text" id="migrationModule" placeholder="Rechercher un module..." autocomplete="off">
+                        <div id="moduleSuggestions" class="suggestions-list" style="display: none;"></div>
                     </div>
                     <div class="filter-group">
                         <label>Type de commit</label>
@@ -285,10 +289,6 @@
                             <label>Branche</label>
                             <select id="moduleAnalyticsBranch">
                                 <option value="">Sélectionner...</option>
-                                <option value="16.0">16.0</option>
-                                <option value="17.0">17.0</option>
-                                <option value="18.0">18.0</option>
-                                <option value="master">master</option>
                             </select>
                         </div>
                     </div>
@@ -344,8 +344,7 @@
                     <div class="filter-group">
                         <label>Dépôt à synchroniser</label>
                         <select id="adminRepoSelect" multiple style="height: 120px;">
-                            <option value="odoo/odoo" selected>odoo/odoo</option>
-                            <option value="odoo/enterprise" selected>odoo/enterprise</option>
+                            <option value="">Chargement...</option>
                         </select>
                         <small style="color: var(--gray-600); display: block; margin-top: 5px;">Maintenez Ctrl pour sélectionner plusieurs</small>
                     </div>
@@ -353,11 +352,6 @@
                         <label>Branches à synchroniser</label>
                         <select id="adminBranchSelect" multiple style="height: 120px;">
                             <option value="">Chargement...</option>
-                            <option value="16.0" selected>16.0</option>
-                            <option value="17.0" selected>17.0</option>
-                            <option value="18.0" selected>18.0</option>
-                            <option value="19.0" selected>19.0</option>
-                            <option value="master" selected>master</option>
                         </select>
                         <small style="color: var(--gray-600); display: block; margin-top: 5px;">Maintenez Ctrl pour sélectionner plusieurs</small>
                     </div>
@@ -369,6 +363,9 @@
                     </button>
                     <button onclick="triggerFetch('full')" class="btn-secondary" id="fullBtn">
                         ⟳ Import Complet (long)
+                    </button>
+                    <button onclick="cancelSync()" class="btn-secondary" id="cancelBtn" style="display: none; background: var(--red); color: var(--white); border-color: var(--red);">
+                        ✕ Annuler
                     </button>
                     <button onclick="loadFetchStatus()" class="btn-secondary">
                         🔄 Rafraîchir

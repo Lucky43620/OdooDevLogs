@@ -96,7 +96,7 @@ def insert_commit(conn, repo_id, commit, branch_id):
                     parent_count, is_merge
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (sha) DO NOTHING
+                ON CONFLICT (sha) DO UPDATE SET branch_id = EXCLUDED.branch_id
                 RETURNING id;
             """, (
                 repo_id,
@@ -119,28 +119,61 @@ def insert_commit(conn, repo_id, commit, branch_id):
             ))
             result = cur.fetchone()
             commit_id = result[0] if result else None
-            conn.commit()
             return commit_id
     except Exception as e:
         logger.error(f"❌ Erreur lors de l'insertion du commit {sha}: {e}")
-        conn.rollback()
         return None
 
 # ============================================================
 # INSÉRER LES FICHIERS MODIFIÉS
 # ============================================================
-def insert_files_changed(conn, commit_id, files):
+def extract_module_name(filename):
+    """Extrait le nom du module depuis le chemin du fichier"""
+    if filename.startswith('addons/'):
+        parts = filename[7:].split('/')
+        return parts[0] if parts and len(parts[0]) > 0 else None
+    elif filename.startswith('odoo/addons/'):
+        parts = filename[12:].split('/')
+        return parts[0] if parts and len(parts[0]) > 0 else None
+    elif '/__manifest__.py' in filename or '/__openerp__.py' in filename:
+        parts = filename.split('/')
+        return parts[0] if parts and len(parts[0]) > 0 else None
+    return None
+
+def auto_detect_modules(conn, repo_id, files):
+    """Détecte et insère automatiquement les nouveaux modules"""
     try:
+        modules_found = set()
+        for file in files:
+            module_name = extract_module_name(file.filename)
+            if module_name and module_name not in ['.', '..', 'setup', 'addons', 'odoo', '']:
+                modules_found.add(module_name)
+
+        if modules_found:
+            with conn.cursor() as cur:
+                for module_name in modules_found:
+                    try:
+                        cur.execute("""
+                            INSERT INTO odoo_devlog.modules (repo_id, name, path_prefix)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT (repo_id, name) DO NOTHING
+                        """, (repo_id, module_name, f"addons/{module_name}/"))
+                    except:
+                        pass
+    except:
+        pass
+
+def insert_files_changed(conn, commit_id, repo_id, files):
+    try:
+        if not files:
+            return
+
+        auto_detect_modules(conn, repo_id, files)
+
         with conn.cursor() as cur:
+            values = []
             for file in files:
-                cur.execute("""
-                    INSERT INTO odoo_devlog.file_changes (
-                        commit_id, filename, status, additions, deletions, changes, patch,
-                        previous_filename, blob_url, raw_url, contents_url
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT DO NOTHING;
-                """, (
+                values.append((
                     commit_id,
                     file.filename,
                     file.status,
@@ -153,10 +186,29 @@ def insert_files_changed(conn, commit_id, files):
                     getattr(file, "raw_url", None),
                     getattr(file, "contents_url", None)
                 ))
-            conn.commit()
+
+            if values:
+                from psycopg2.extras import execute_values
+                execute_values(cur, """
+                    INSERT INTO odoo_devlog.file_changes (
+                        commit_id, filename, status, additions, deletions, changes, patch,
+                        previous_filename, blob_url, raw_url, contents_url
+                    )
+                    VALUES %s
+                    ON CONFLICT DO NOTHING
+                """, values)
+
+        conn.commit()
     except Exception as e:
-        logger.error(f"❌ Erreur lors de l'insertion des fichiers pour le commit {commit_id}: {e}")
-        conn.rollback()
+        error_msg = str(e)
+        if "No space left on device" in error_msg or "DiskFull" in error_msg:
+            logger.error(f"❌ ERREUR CRITIQUE: Disque plein ! Arrêt de la synchronisation.")
+            logger.error(f"ℹ️  Libérez de l'espace disque et relancez la synchronisation.")
+            conn.rollback()
+            raise Exception("Disk full - stopping sync")
+        else:
+            logger.error(f"❌ Erreur lors de l'insertion des fichiers pour le commit {commit_id}: {e}")
+            conn.rollback()
 
 # ============================================================
 # CRÉER UNE ENTRÉE DANS LE LOG D'IMPORT
@@ -229,21 +281,24 @@ def fetch_commits_for_branch(repo_name, branch_name):
             if commit_id:
                 if commit.files:
                     files_list = list(commit.files)
-                    insert_files_changed(conn, commit_id, files_list)
+                    insert_files_changed(conn, commit_id, repo_id, files_list)
                     files_count += len(files_list)
                 count += 1
 
-                if count % 10 == 0:
+                if count % 50 == 0:
+                    conn.commit()
                     logger.info(f"   ✓ {count} commits ajoutés...")
             else:
                 skipped += 1
 
-                if (count + skipped) % 100 == 0:
-                    logger.info(f"   → Traité: {count + skipped} commits ({count} nouveaux, {skipped} existants)")
+            if (count + skipped) % 100 == 0 and (count + skipped) > 0:
+                logger.info(f"   → Traité: {count + skipped} commits ({count} nouveaux, {skipped} existants)")
 
             if MAX_COMMITS_PER_BRANCH > 0 and count >= MAX_COMMITS_PER_BRANCH:
                 logger.warning(f"⚠️  Limite atteinte: {MAX_COMMITS_PER_BRANCH} commits")
                 break
+
+        conn.commit()
 
         update_import_log(conn, log_id, 'success', count)
         logger.info(f"")
@@ -337,7 +392,7 @@ def fetch_new_commits_only(repo_name, branch_name):
             if commit_id:
                 if commit.files:
                     files_list = list(commit.files)
-                    insert_files_changed(conn, commit_id, files_list)
+                    insert_files_changed(conn, commit_id, repo_id, files_list)
                     files_count += len(files_list)
                 count += 1
 

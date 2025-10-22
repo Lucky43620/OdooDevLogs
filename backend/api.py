@@ -165,19 +165,31 @@ def get_commits(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     author: Optional[str] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    module: Optional[str] = None
 ):
     """Liste les commits d'une branche avec pagination et filtres"""
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            query = """
-                SELECT id, sha, message, author_name, author_email, committed_date,
-                       additions, deletions, total_changes, is_merge, html_url
-                FROM odoo_devlog.commits
-                WHERE branch_id = %s
-            """
-            params = [branch_id]
+            if module:
+                query = """
+                    SELECT DISTINCT c.id, c.sha, c.message, c.author_name, c.author_email, c.committed_date,
+                           c.additions, c.deletions, c.total_changes, c.is_merge, c.html_url
+                    FROM odoo_devlog.commits c
+                    INNER JOIN odoo_devlog.file_changes fc ON fc.commit_id = c.id
+                    WHERE c.branch_id = %s
+                      AND (fc.filename LIKE %s OR fc.filename LIKE %s OR fc.filename LIKE %s)
+                """
+                params = [branch_id, f'addons/{module}/%', f'odoo/addons/{module}/%', f'{module}/%']
+            else:
+                query = """
+                    SELECT id, sha, message, author_name, author_email, committed_date,
+                           additions, deletions, total_changes, is_merge, html_url
+                    FROM odoo_devlog.commits
+                    WHERE branch_id = %s
+                """
+                params = [branch_id]
 
             if author:
                 query += " AND author_name ILIKE %s"
@@ -481,8 +493,8 @@ def search_migration_changes(
                     fc.id as file_id, fc.filename, fc.status, fc.additions as file_additions,
                     fc.deletions as file_deletions, fc.patch
                 FROM odoo_devlog.commits c
-                JOIN odoo_devlog.branches b ON c.branch_id = b.id
-                JOIN odoo_devlog.file_changes fc ON fc.commit_id = c.id
+                INNER JOIN odoo_devlog.branches b ON c.branch_id = b.id
+                INNER JOIN odoo_devlog.file_changes fc ON fc.commit_id = c.id
                 WHERE (c.branch_id = %s OR c.branch_id = %s)
                   AND fc.patch IS NOT NULL
                   AND {"fc.patch" if use_regex else "LOWER(fc.patch)"} {search_operator} {"%s" if use_regex else "LOWER(%s)"}
@@ -491,8 +503,8 @@ def search_migration_changes(
             params = [from_branch_id, to_branch_id, search_term]
 
             if module:
-                query += " AND fc.filename LIKE %s"
-                params.append(f'%{module}%')
+                query += " AND (fc.filename LIKE %s OR fc.filename LIKE %s OR fc.filename LIKE %s OR fc.filename LIKE %s)"
+                params.extend([f'addons/{module}/%', f'odoo/addons/{module}/%', f'{module}/%', f'%/{module}/%'])
 
             if commit_type:
                 query += " AND UPPER(c.message) LIKE %s"
@@ -538,17 +550,28 @@ def search_migration_changes(
         conn.close()
 
 @app.get("/modules")
-def get_modules():
-    """Liste tous les modules détectés"""
+def get_modules(search: Optional[str] = None, limit: int = Query(100, ge=1, le=500)):
+    """Liste tous les modules détectés avec recherche optionnelle"""
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT DISTINCT m.name, m.path_prefix, r.full_name
-                FROM odoo_devlog.modules m
-                JOIN odoo_devlog.repositories r ON m.repo_id = r.id
-                ORDER BY m.name;
-            """)
+            if search:
+                cur.execute("""
+                    SELECT DISTINCT m.name, m.path_prefix, r.full_name
+                    FROM odoo_devlog.modules m
+                    JOIN odoo_devlog.repositories r ON m.repo_id = r.id
+                    WHERE m.name ILIKE %s
+                    ORDER BY m.name
+                    LIMIT %s;
+                """, (f'%{search}%', limit))
+            else:
+                cur.execute("""
+                    SELECT DISTINCT m.name, m.path_prefix, r.full_name
+                    FROM odoo_devlog.modules m
+                    JOIN odoo_devlog.repositories r ON m.repo_id = r.id
+                    ORDER BY m.name
+                    LIMIT %s;
+                """, (limit,))
             rows = cur.fetchall()
             return [{"name": r[0], "path": r[1], "repo": r[2]} for r in rows]
     finally:
@@ -635,15 +658,19 @@ def get_module_analytics(
             SELECT
                 m.name,
                 COUNT(DISTINCT fc.commit_id) as commit_count,
-                SUM(fc.additions) as total_additions,
-                SUM(fc.deletions) as total_deletions,
+                COALESCE(SUM(fc.additions), 0) as total_additions,
+                COALESCE(SUM(fc.deletions), 0) as total_deletions,
                 COUNT(DISTINCT c.author_name) as contributor_count,
-                MAX(c.commit_date) as last_modified
+                MAX(c.committed_date) as last_modified
             FROM odoo_devlog.modules m
-            LEFT JOIN odoo_devlog.file_changes fc ON fc.filename LIKE m.name || '%'
-            LEFT JOIN odoo_devlog.commits c ON c.id = fc.commit_id
-            LEFT JOIN odoo_devlog.branches b ON b.id = c.branch_id
-            WHERE b.name = %s
+            INNER JOIN odoo_devlog.file_changes fc ON (
+                fc.filename LIKE 'addons/' || m.name || '/%'
+                OR fc.filename LIKE 'odoo/addons/' || m.name || '/%'
+                OR fc.filename LIKE m.name || '/%'
+            )
+            INNER JOIN odoo_devlog.commits c ON c.id = fc.commit_id
+            INNER JOIN odoo_devlog.branches b ON b.id = c.branch_id
+            WHERE b.name = %s AND m.name IS NOT NULL
             GROUP BY m.name
             HAVING COUNT(DISTINCT fc.commit_id) > 0
             ORDER BY commit_count DESC
@@ -772,9 +799,12 @@ def get_detected_changes(
 # ============================================================
 import asyncio
 from fastapi.responses import StreamingResponse
+import tempfile
+from pathlib import Path
 
 current_fetch_process = None
 fetch_lock = asyncio.Lock()
+current_log_file = None
 
 class FetchRequest(BaseModel):
     mode: str
@@ -787,7 +817,7 @@ async def trigger_fetch(request: FetchRequest):
     import subprocess
     import sys
 
-    global current_fetch_process
+    global current_fetch_process, current_log_file
 
     async with fetch_lock:
         if current_fetch_process and current_fetch_process.poll() is None:
@@ -801,7 +831,7 @@ async def trigger_fetch(request: FetchRequest):
         try:
             script_path = os.path.join(os.path.dirname(__file__), "..", "scripts", "fetch_commits.py")
 
-            cmd = [sys.executable, script_path]
+            cmd = [sys.executable, "-u", script_path]
 
             if request.mode == "full":
                 cmd.append("full")
@@ -814,20 +844,27 @@ async def trigger_fetch(request: FetchRequest):
                 cmd.append("--branches")
                 cmd.extend(request.branches)
 
+            log_dir = Path(__file__).parent.parent / "logs"
+            log_dir.mkdir(exist_ok=True)
+            current_log_file = log_dir / f"sync_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+
+            log_handle = open(current_log_file, 'w', encoding='utf-8')
+
+            env = os.environ.copy()
+            env['PYTHONUNBUFFERED'] = '1'
+
             current_fetch_process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=1,
-                universal_newlines=True,
-                encoding='utf-8',
-                errors='replace'
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                env=env
             )
 
             return {
                 "status": "started",
                 "mode": request.mode,
                 "pid": current_fetch_process.pid,
+                "log_file": str(current_log_file),
                 "repositories": request.repositories or ["all"],
                 "branches": request.branches or ["all"],
                 "message": f"Fetch {request.mode} démarré"
@@ -835,72 +872,54 @@ async def trigger_fetch(request: FetchRequest):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
 
-@app.get("/admin/fetch-stream")
-async def fetch_stream():
-    """Stream les logs du fetch en temps réel"""
-    async def generate():
-        global current_fetch_process
+@app.get("/admin/fetch-logs")
+def get_fetch_logs(last_position: int = 0):
+    """Récupère les nouveaux logs depuis la dernière position"""
+    global current_log_file, current_fetch_process
 
-        if not current_fetch_process or current_fetch_process.poll() is not None:
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Aucune synchronisation en cours'})}\n\n"
-            yield f"data: {json.dumps({'type': 'complete', 'message': 'Terminé'})}\n\n"
-            return
-
-        try:
-            import select
-            while current_fetch_process.poll() is None:
-                if current_fetch_process.stdout:
-                    line = current_fetch_process.stdout.readline()
-                    if line:
-                        line = line.strip()
-                        if line:
-                            log_type = 'info'
-                            if '✅' in line or 'success' in line.lower() or 'réussie' in line.lower():
-                                log_type = 'success'
-                            elif '❌' in line or 'error' in line.lower() or 'erreur' in line.lower():
-                                log_type = 'error'
-                            elif '⚠️' in line or 'warning' in line.lower():
-                                log_type = 'warning'
-                            elif '➡️' in line or '->' in line:
-                                log_type = 'info'
-
-                            yield f"data: {json.dumps({'type': log_type, 'message': line})}\n\n"
-
-                await asyncio.sleep(0.05)
-
-            remaining_stdout = current_fetch_process.stdout.read() if current_fetch_process.stdout else ""
-            remaining_stderr = current_fetch_process.stderr.read() if current_fetch_process.stderr else ""
-
-            if remaining_stdout:
-                for line in remaining_stdout.split('\n'):
-                    line = line.strip()
-                    if line:
-                        yield f"data: {json.dumps({'type': 'info', 'message': line})}\n\n"
-
-            if remaining_stderr:
-                for line in remaining_stderr.split('\n'):
-                    line = line.strip()
-                    if line:
-                        yield f"data: {json.dumps({'type': 'error', 'message': line})}\n\n"
-
-            return_code = current_fetch_process.returncode
-            if return_code == 0:
-                yield f"data: {json.dumps({'type': 'complete', 'message': '✅ Synchronisation terminée avec succès'})}\n\n"
-            else:
-                yield f"data: {json.dumps({'type': 'complete', 'message': f'⚠️ Synchronisation terminée avec code: {return_code}'})}\n\n"
-
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': f'❌ Erreur: {str(e)}'})}\n\n"
-            yield f"data: {json.dumps({'type': 'complete', 'message': 'Terminé avec erreur'})}\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no"
+    if not current_log_file or not Path(current_log_file).exists():
+        return {
+            "running": False,
+            "logs": [],
+            "position": 0,
+            "completed": True
         }
-    )
+
+    try:
+        with open(current_log_file, 'r', encoding='utf-8') as f:
+            f.seek(last_position)
+            new_lines = f.readlines()
+            new_position = f.tell()
+
+        logs = []
+        for line in new_lines:
+            line = line.strip()
+            if line:
+                log_type = 'info'
+                if '✅' in line or 'success' in line.lower() or 'réussie' in line.lower():
+                    log_type = 'success'
+                elif '❌' in line or 'error' in line.lower() or 'erreur' in line.lower():
+                    log_type = 'error'
+                elif '⚠️' in line or 'warning' in line.lower():
+                    log_type = 'warning'
+
+                logs.append({'type': log_type, 'message': line})
+
+        is_running = current_fetch_process and current_fetch_process.poll() is None
+
+        return {
+            "running": is_running,
+            "logs": logs,
+            "position": new_position,
+            "completed": not is_running
+        }
+    except Exception as e:
+        return {
+            "running": False,
+            "logs": [{'type': 'error', 'message': f'Erreur: {str(e)}'}],
+            "position": last_position,
+            "completed": True
+        }
 
 @app.get("/admin/fetch-running")
 def is_fetch_running():
@@ -913,6 +932,33 @@ def is_fetch_running():
             "pid": current_fetch_process.pid
         }
     return {"running": False}
+
+@app.post("/admin/cancel-fetch")
+async def cancel_fetch():
+    """Annule la synchronisation en cours"""
+    global current_fetch_process
+
+    async with fetch_lock:
+        if not current_fetch_process or current_fetch_process.poll() is not None:
+            return {
+                "status": "no_process",
+                "message": "Aucune synchronisation en cours"
+            }
+
+        try:
+            current_fetch_process.terminate()
+
+            try:
+                current_fetch_process.wait(timeout=5)
+            except:
+                current_fetch_process.kill()
+
+            return {
+                "status": "cancelled",
+                "message": "Synchronisation annulée"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erreur lors de l'annulation: {str(e)}")
 
 @app.get("/admin/fetch-status")
 def get_fetch_status():

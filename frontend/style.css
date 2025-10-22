@@ -198,7 +198,7 @@ body {
 }
 
 .btn {
-    padding: 10px 20px;
+    padding: 12px 24px;
     background: var(--black);
     color: var(--white);
     border: 2px solid var(--black);
@@ -223,9 +223,17 @@ body {
 }
 
 .btn-secondary {
+    padding: 12px 24px;
     background: var(--white);
     color: var(--black);
     border: 2px solid var(--gray-300);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 0.85rem;
+    transition: all 0.15s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    cursor: pointer;
 }
 
 .btn-secondary:hover {
@@ -1243,4 +1251,78 @@ body {
     border-top-color: var(--white);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
+}
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    margin-top: 20px;
+    padding: 20px;
+}
+
+.page-btn {
+    padding: 12px 24px;
+    background: var(--white);
+    color: var(--black);
+    border: 2px solid var(--gray-300);
+    cursor: pointer;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 0.85rem;
+    transition: all 0.15s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.page-btn:hover:not(:disabled) {
+    background: var(--gray-50);
+    border-color: var(--black);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.page-btn.active {
+    background: var(--black);
+    color: var(--white);
+    border-color: var(--black);
+    cursor: default;
+}
+
+.page-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--gray-100);
+    color: var(--gray-500);
+    border-color: var(--gray-300);
+}
+
+.suggestions-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--white);
+    border: 2px solid var(--black);
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1000;
+    margin-top: 2px;
+}
+
+.suggestion-item {
+    padding: 10px 15px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--gray-200);
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+}
+
+.suggestion-item:hover {
+    background: var(--gray-100);
+}
+
+.suggestion-item:last-child {
+    border-bottom: none;
 }
