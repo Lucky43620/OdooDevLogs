@@ -344,7 +344,8 @@
                     <div class="filter-group">
                         <label>Dépôt à synchroniser</label>
                         <select id="adminRepoSelect" multiple style="height: 120px;">
-                            <option value="">Chargement...</option>
+                            <option value="odoo/odoo" selected>odoo/odoo</option>
+                            <option value="odoo/enterprise" selected>odoo/enterprise</option>
                         </select>
                         <small style="color: var(--gray-600); display: block; margin-top: 5px;">Maintenez Ctrl pour sélectionner plusieurs</small>
                     </div>
@@ -352,6 +353,11 @@
                         <label>Branches à synchroniser</label>
                         <select id="adminBranchSelect" multiple style="height: 120px;">
                             <option value="">Chargement...</option>
+                            <option value="16.0" selected>16.0</option>
+                            <option value="17.0" selected>17.0</option>
+                            <option value="18.0" selected>18.0</option>
+                            <option value="19.0" selected>19.0</option>
+                            <option value="master" selected>master</option>
                         </select>
                         <small style="color: var(--gray-600); display: block; margin-top: 5px;">Maintenez Ctrl pour sélectionner plusieurs</small>
                     </div>
