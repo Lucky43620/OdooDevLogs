@@ -12,15 +12,21 @@ import time
 load_dotenv()
 
 # Configuration du logging avec support UTF-8
+class FlushStreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(message)s',
     handlers=[
         logging.FileHandler('fetch_commits.log', encoding='utf-8'),
-        logging.StreamHandler()
+        FlushStreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Fix pour l'encodage UTF-8 sur Windows
 import sys
@@ -202,40 +208,50 @@ def fetch_commits_for_branch(repo_name, branch_name):
                 return
             branch_id = branch_data[0]
 
-        # Créer une entrée de log
         log_id = create_import_log(conn, repo_id, branch_name)
-        logger.info(f"🔄 Récupération des commits de {repo_name} ({branch_name})...")
+        logger.info(f"")
+        logger.info(f"📦 Dépôt: {repo_name}")
+        logger.info(f"🌿 Branche: {branch_name}")
+        logger.info(f"🔄 Récupération des commits...")
 
         commits = repo.get_commits(sha=branch_name)
         count = 0
         skipped = 0
+        files_count = 0
 
         for commit in commits:
-            # Vérifier le rate limit GitHub
             rate_limit = g.get_rate_limit()
             if rate_limit.core.remaining < 100:
-                logger.warning(f"⚠️  Rate limit faible: {rate_limit.core.remaining} requêtes restantes. Pause de 60 secondes...")
+                logger.warning(f"⚠️  Rate limit: {rate_limit.core.remaining} requêtes restantes. Pause 60s...")
                 time.sleep(60)
 
             commit_id = insert_commit(conn, repo_id, commit, branch_id)
             if commit_id:
                 if commit.files:
-                    insert_files_changed(conn, commit_id, commit.files)
+                    files_list = list(commit.files)
+                    insert_files_changed(conn, commit_id, files_list)
+                    files_count += len(files_list)
                 count += 1
+
+                if count % 10 == 0:
+                    logger.info(f"   ✓ {count} commits ajoutés...")
             else:
                 skipped += 1
 
-            if count % 50 == 0:
-                logger.info(f"   → {count} commits enregistrés, {skipped} ignorés (déjà présents)...")
+                if (count + skipped) % 100 == 0:
+                    logger.info(f"   → Traité: {count + skipped} commits ({count} nouveaux, {skipped} existants)")
 
-            # Limite de sécurité (si MAX_COMMITS_PER_BRANCH > 0)
             if MAX_COMMITS_PER_BRANCH > 0 and count >= MAX_COMMITS_PER_BRANCH:
-                logger.warning(f"⚠️  Limite de {MAX_COMMITS_PER_BRANCH} commits atteinte. Arrêt.")
+                logger.warning(f"⚠️  Limite atteinte: {MAX_COMMITS_PER_BRANCH} commits")
                 break
 
-        # Mettre à jour le log avec succès
         update_import_log(conn, log_id, 'success', count)
-        logger.info(f"✅ Synchronisation terminée : {count} commits importés, {skipped} ignorés pour {repo_name} ({branch_name}).")
+        logger.info(f"")
+        logger.info(f"✅ Terminé pour {repo_name}/{branch_name}")
+        logger.info(f"   • {count} commits importés")
+        logger.info(f"   • {skipped} commits ignorés (déjà présents)")
+        logger.info(f"   • {files_count} fichiers analysés")
+        logger.info(f"")
 
     except GithubException as e:
         error_msg = f"Erreur GitHub API: {e.status} - {e.data}"
@@ -289,50 +305,58 @@ def fetch_new_commits_only(repo_name, branch_name):
             """, (branch_id,))
             last_commit = cur.fetchone()
 
-        # Créer une entrée de log
         log_id = create_import_log(conn, repo_id, branch_name)
+        logger.info(f"")
+        logger.info(f"📦 Dépôt: {repo_name}")
+        logger.info(f"🌿 Branche: {branch_name}")
 
         if last_commit:
             last_sha, last_date = last_commit
-            logger.info(f"🔄 Récupération des nouveaux commits de {repo_name} ({branch_name}) depuis {last_sha[:7]} ({last_date})...")
+            logger.info(f"🔄 Mode incrémental depuis {last_sha[:7]} ({last_date})")
         else:
-            logger.info(f"🔄 Première récupération des commits de {repo_name} ({branch_name})...")
+            logger.info(f"🔄 Première synchronisation (tous les commits)")
+
+        logger.info(f"🔍 Récupération des commits...")
 
         commits = repo.get_commits(sha=branch_name)
         count = 0
         skipped = 0
+        files_count = 0
 
         for commit in commits:
-            # Si on atteint le dernier commit connu, on arrête
             if last_commit and commit.sha == last_commit[0]:
-                logger.info(f"✅ Dernier commit connu atteint ({commit.sha[:7]}). Arrêt.")
+                logger.info(f"✓ Dernier commit connu atteint ({commit.sha[:7]})")
                 break
 
-            # Vérifier le rate limit GitHub
             rate_limit = g.get_rate_limit()
             if rate_limit.core.remaining < 100:
-                logger.warning(f"⚠️  Rate limit faible: {rate_limit.core.remaining} requêtes restantes. Pause de 60 secondes...")
+                logger.warning(f"⚠️  Rate limit: {rate_limit.core.remaining} requêtes. Pause 60s...")
                 time.sleep(60)
 
             commit_id = insert_commit(conn, repo_id, commit, branch_id)
             if commit_id:
                 if commit.files:
-                    insert_files_changed(conn, commit_id, commit.files)
+                    files_list = list(commit.files)
+                    insert_files_changed(conn, commit_id, files_list)
+                    files_count += len(files_list)
                 count += 1
+
+                if count % 10 == 0:
+                    logger.info(f"   ✓ {count} nouveaux commits")
             else:
                 skipped += 1
 
-            if count % 50 == 0:
-                logger.info(f"   → {count} nouveaux commits enregistrés, {skipped} ignorés...")
-
-            # Limite de sécurité (si MAX_COMMITS_PER_BRANCH > 0)
             if MAX_COMMITS_PER_BRANCH > 0 and count >= MAX_COMMITS_PER_BRANCH:
-                logger.warning(f"⚠️  Limite de {MAX_COMMITS_PER_BRANCH} commits atteinte. Arrêt.")
+                logger.warning(f"⚠️  Limite: {MAX_COMMITS_PER_BRANCH} commits")
                 break
 
-        # Mettre à jour le log avec succès
         update_import_log(conn, log_id, 'success', count)
-        logger.info(f"✅ Synchronisation terminée : {count} nouveaux commits importés pour {repo_name} ({branch_name}).")
+        logger.info(f"")
+        logger.info(f"✅ Terminé pour {repo_name}/{branch_name}")
+        logger.info(f"   • {count} nouveaux commits")
+        logger.info(f"   • {skipped} ignorés")
+        logger.info(f"   • {files_count} fichiers analysés")
+        logger.info(f"")
 
     except GithubException as e:
         error_msg = f"Erreur GitHub API: {e.status} - {e.data}"
@@ -353,22 +377,42 @@ def fetch_new_commits_only(repo_name, branch_name):
 # ============================================================
 if __name__ == "__main__":
     import sys
+    import argparse
 
-    # Mode incrémental par défaut (seulement les nouveaux commits)
-    mode = sys.argv[1] if len(sys.argv) > 1 else "incremental"
+    parser = argparse.ArgumentParser(description='Fetch commits from Odoo repositories')
+    parser.add_argument('mode', nargs='?', default='incremental', choices=['incremental', 'full'],
+                        help='Mode de synchronisation (incremental ou full)')
+    parser.add_argument('--repos', nargs='+', help='Liste des dépôts à synchroniser (ex: odoo/odoo odoo/enterprise)')
+    parser.add_argument('--branches', nargs='+', help='Liste des branches à synchroniser (ex: 16.0 17.0 18.0)')
+
+    args = parser.parse_args()
+
+    repos_to_sync = args.repos if args.repos else REPOSITORIES
+    branches_to_sync = args.branches if args.branches else BRANCHES
+
+    logger.info("=" * 60)
+    logger.info("🚀 SYNCHRONISATION ODOO DEVLOGS")
+    logger.info("=" * 60)
+    logger.info(f"Mode: {args.mode.upper()}")
+    logger.info(f"Dépôts: {', '.join(repos_to_sync)}")
+    logger.info(f"Branches: {', '.join(branches_to_sync)}")
 
     if MAX_COMMITS_PER_BRANCH == 0:
-        logger.info("📊 Configuration : AUCUNE LIMITE de commits (récupération complète)")
+        logger.info("📊 Limite: AUCUNE (récupération complète)")
     else:
-        logger.info(f"📊 Configuration : Limite de {MAX_COMMITS_PER_BRANCH} commits par branche")
+        logger.info(f"📊 Limite: {MAX_COMMITS_PER_BRANCH} commits par branche")
 
-    if mode == "full":
-        logger.info("🚀 Mode FULL : récupération de tous les commits")
-        for repo in REPOSITORIES:
-            for branch in BRANCHES:
+    logger.info("=" * 60)
+
+    if args.mode == "full":
+        for repo in repos_to_sync:
+            for branch in branches_to_sync:
                 fetch_commits_for_branch(repo, branch)
     else:
-        logger.info("🚀 Mode INCREMENTAL : récupération des nouveaux commits uniquement")
-        for repo in REPOSITORIES:
-            for branch in BRANCHES:
+        for repo in repos_to_sync:
+            for branch in branches_to_sync:
                 fetch_new_commits_only(repo, branch)
+
+    logger.info("=" * 60)
+    logger.info("✅ SYNCHRONISATION TERMINÉE")
+    logger.info("=" * 60)

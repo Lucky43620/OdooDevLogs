@@ -7,6 +7,7 @@ from typing import Optional, List
 from datetime import datetime
 from dotenv import load_dotenv
 from pydantic import BaseModel
+import json
 
 # ============================================================
 # CONFIGURATION
@@ -476,7 +477,7 @@ def search_migration_changes(
             query = f"""
                 SELECT DISTINCT
                     c.id, c.sha, c.message, c.author_name, c.committed_date,
-                    c.additions, c.deletions, b.name as branch_name,
+                    c.additions, c.deletions, b.name as branch_name, c.html_url,
                     fc.id as file_id, fc.filename, fc.status, fc.additions as file_additions,
                     fc.deletions as file_deletions, fc.patch
                 FROM odoo_devlog.commits c
@@ -514,15 +515,16 @@ def search_migration_changes(
                         "date": row[4].isoformat() if row[4] else None,
                         "additions": row[5],
                         "deletions": row[6],
-                        "branch": row[7]
+                        "branch": row[7],
+                        "html_url": row[8]
                     },
                     "file": {
-                        "id": row[8],
-                        "filename": row[9],
-                        "status": row[10],
-                        "additions": row[11],
-                        "deletions": row[12],
-                        "patch": row[13]
+                        "id": row[9],
+                        "filename": row[10],
+                        "status": row[11],
+                        "additions": row[12],
+                        "deletions": row[13],
+                        "patch": row[14]
                     }
                 })
 
@@ -768,33 +770,149 @@ def get_detected_changes(
 # ============================================================
 # ADMIN / FETCH MANAGEMENT
 # ============================================================
+import asyncio
+from fastapi.responses import StreamingResponse
+
+current_fetch_process = None
+fetch_lock = asyncio.Lock()
+
+class FetchRequest(BaseModel):
+    mode: str
+    repositories: Optional[List[str]] = None
+    branches: Optional[List[str]] = None
+
 @app.post("/admin/fetch")
-async def trigger_fetch(mode: str = Query("incremental", regex="^(incremental|full)$")):
+async def trigger_fetch(request: FetchRequest):
     """Déclenche un fetch des commits"""
     import subprocess
     import sys
 
-    try:
-        script_path = os.path.join(os.path.dirname(__file__), "..", "scripts", "fetch_commits.py")
+    global current_fetch_process
 
-        # Lancer le script en arrière-plan
-        if mode == "full":
-            process = subprocess.Popen([sys.executable, script_path, "full"],
-                                      stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE)
-        else:
-            process = subprocess.Popen([sys.executable, script_path],
-                                      stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE)
+    async with fetch_lock:
+        if current_fetch_process and current_fetch_process.poll() is None:
+            return {
+                "status": "already_running",
+                "mode": request.mode,
+                "pid": current_fetch_process.pid,
+                "message": "Une synchronisation est déjà en cours"
+            }
 
-        return {
-            "status": "started",
-            "mode": mode,
-            "pid": process.pid,
-            "message": f"Fetch {mode} démarré en arrière-plan"
+        try:
+            script_path = os.path.join(os.path.dirname(__file__), "..", "scripts", "fetch_commits.py")
+
+            cmd = [sys.executable, script_path]
+
+            if request.mode == "full":
+                cmd.append("full")
+
+            if request.repositories:
+                cmd.append("--repos")
+                cmd.extend(request.repositories)
+
+            if request.branches:
+                cmd.append("--branches")
+                cmd.extend(request.branches)
+
+            current_fetch_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=1,
+                universal_newlines=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+
+            return {
+                "status": "started",
+                "mode": request.mode,
+                "pid": current_fetch_process.pid,
+                "repositories": request.repositories or ["all"],
+                "branches": request.branches or ["all"],
+                "message": f"Fetch {request.mode} démarré"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
+
+@app.get("/admin/fetch-stream")
+async def fetch_stream():
+    """Stream les logs du fetch en temps réel"""
+    async def generate():
+        global current_fetch_process
+
+        if not current_fetch_process or current_fetch_process.poll() is not None:
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Aucune synchronisation en cours'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'message': 'Terminé'})}\n\n"
+            return
+
+        try:
+            import select
+            while current_fetch_process.poll() is None:
+                if current_fetch_process.stdout:
+                    line = current_fetch_process.stdout.readline()
+                    if line:
+                        line = line.strip()
+                        if line:
+                            log_type = 'info'
+                            if '✅' in line or 'success' in line.lower() or 'réussie' in line.lower():
+                                log_type = 'success'
+                            elif '❌' in line or 'error' in line.lower() or 'erreur' in line.lower():
+                                log_type = 'error'
+                            elif '⚠️' in line or 'warning' in line.lower():
+                                log_type = 'warning'
+                            elif '➡️' in line or '->' in line:
+                                log_type = 'info'
+
+                            yield f"data: {json.dumps({'type': log_type, 'message': line})}\n\n"
+
+                await asyncio.sleep(0.05)
+
+            remaining_stdout = current_fetch_process.stdout.read() if current_fetch_process.stdout else ""
+            remaining_stderr = current_fetch_process.stderr.read() if current_fetch_process.stderr else ""
+
+            if remaining_stdout:
+                for line in remaining_stdout.split('\n'):
+                    line = line.strip()
+                    if line:
+                        yield f"data: {json.dumps({'type': 'info', 'message': line})}\n\n"
+
+            if remaining_stderr:
+                for line in remaining_stderr.split('\n'):
+                    line = line.strip()
+                    if line:
+                        yield f"data: {json.dumps({'type': 'error', 'message': line})}\n\n"
+
+            return_code = current_fetch_process.returncode
+            if return_code == 0:
+                yield f"data: {json.dumps({'type': 'complete', 'message': '✅ Synchronisation terminée avec succès'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'complete', 'message': f'⚠️ Synchronisation terminée avec code: {return_code}'})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'❌ Erreur: {str(e)}'})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'message': 'Terminé avec erreur'})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no"
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors du lancement du fetch: {str(e)}")
+    )
+
+@app.get("/admin/fetch-running")
+def is_fetch_running():
+    """Vérifie si un fetch est en cours"""
+    global current_fetch_process
+
+    if current_fetch_process and current_fetch_process.poll() is None:
+        return {
+            "running": True,
+            "pid": current_fetch_process.pid
+        }
+    return {"running": False}
 
 @app.get("/admin/fetch-status")
 def get_fetch_status():

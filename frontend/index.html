@@ -98,6 +98,21 @@
                         <label>Auteur</label>
                         <input type="text" id="authorFilter" placeholder="Filtrer par auteur...">
                     </div>
+                    <div class="filter-group">
+                        <label>Extension fichier</label>
+                        <select id="commitFileExtension">
+                            <option value="">Tous...</option>
+                            <option value=".py">Python (.py)</option>
+                            <option value=".xml">XML (.xml)</option>
+                            <option value=".js">JavaScript (.js)</option>
+                            <option value=".css">CSS (.css)</option>
+                            <option value=".scss">SCSS (.scss)</option>
+                            <option value=".json">JSON (.json)</option>
+                            <option value=".yml">.yml</option>
+                            <option value=".txt">.txt</option>
+                            <option value=".md">Markdown (.md)</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
@@ -170,18 +185,12 @@
                         <label>Version Source</label>
                         <select id="migrationFromVersion">
                             <option value="">Sélectionner...</option>
-                            <option value="16.0">16.0</option>
-                            <option value="17.0">17.0</option>
-                            <option value="18.0">18.0</option>
                         </select>
                     </div>
                     <div class="filter-group">
                         <label>Version Cible</label>
                         <select id="migrationToVersion">
                             <option value="">Sélectionner...</option>
-                            <option value="17.0">17.0</option>
-                            <option value="18.0">18.0</option>
-                            <option value="master">master</option>
                         </select>
                     </div>
                     <div class="filter-group">
@@ -199,6 +208,21 @@
                         <label>Type de commit</label>
                         <select id="migrationCommitType">
                             <option value="">Tous...</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Extension fichier</label>
+                        <select id="migrationFileExtension">
+                            <option value="">Tous...</option>
+                            <option value=".py">Python (.py)</option>
+                            <option value=".xml">XML (.xml)</option>
+                            <option value=".js">JavaScript (.js)</option>
+                            <option value=".css">CSS (.css)</option>
+                            <option value=".scss">SCSS (.scss)</option>
+                            <option value=".json">JSON (.json)</option>
+                            <option value=".yml">.yml</option>
+                            <option value=".txt">.txt</option>
+                            <option value=".md">Markdown (.md)</option>
                         </select>
                     </div>
                 </div>
@@ -313,33 +337,65 @@
             <h2>Administration</h2>
 
             <div class="admin-card">
-                <h3>Gestion des Imports</h3>
-                <p style="color: var(--gray-600); margin-bottom: 20px;">Actualiser les commits depuis GitHub</p>
+                <h3>Synchronisation GitHub</h3>
+                <p style="color: var(--gray-600); margin-bottom: 20px;">Importer les commits depuis les dépôts Odoo</p>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                    <div class="filter-group">
+                        <label>Dépôt à synchroniser</label>
+                        <select id="adminRepoSelect" multiple style="height: 120px;">
+                            <option value="">Chargement...</option>
+                        </select>
+                        <small style="color: var(--gray-600); display: block; margin-top: 5px;">Maintenez Ctrl pour sélectionner plusieurs</small>
+                    </div>
+                    <div class="filter-group">
+                        <label>Branches à synchroniser</label>
+                        <select id="adminBranchSelect" multiple style="height: 120px;">
+                            <option value="">Chargement...</option>
+                        </select>
+                        <small style="color: var(--gray-600); display: block; margin-top: 5px;">Maintenez Ctrl pour sélectionner plusieurs</small>
+                    </div>
+                </div>
 
                 <div class="admin-controls">
-                    <button onclick="triggerFetch('incremental')" class="btn">
+                    <button onclick="triggerFetch('incremental')" class="btn" id="incrementalBtn">
                         ↻ Import Incrémental
                     </button>
-                    <button onclick="triggerFetch('full')" class="btn-secondary">
-                        ⟳ Import Complet
+                    <button onclick="triggerFetch('full')" class="btn-secondary" id="fullBtn">
+                        ⟳ Import Complet (long)
                     </button>
                     <button onclick="loadFetchStatus()" class="btn-secondary">
-                        📊 Rafraîchir
-                    </button>
-                    <button onclick="stopFetchInterval()" class="btn-secondary" id="stopIntervalBtn" style="display: none;">
-                        ⏹ Arrêter le suivi
+                        🔄 Rafraîchir
                     </button>
                 </div>
 
-                <div id="fetchStatus" class="admin-status">
-                    <p class="loading">Chargement du statut</p>
+                <div id="syncStatus" style="margin: 20px 0; padding: 15px; background: var(--gray-50); border-left: 4px solid var(--gray-300); display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <strong style="font-size: 1rem;">Synchronisation en cours...</strong>
+                        <span id="syncProgress" style="color: var(--gray-600); font-size: 0.9rem;">0%</span>
+                    </div>
+                    <div style="width: 100%; height: 8px; background: var(--gray-200); border-radius: 4px; overflow: hidden;">
+                        <div id="syncProgressBar" style="width: 0%; height: 100%; background: var(--black); transition: width 0.3s;"></div>
+                    </div>
+                </div>
+
+                <div class="terminal-container" id="terminalContainer">
+                    <div class="terminal-header">
+                        <span>📟 Terminal de synchronisation</span>
+                        <button onclick="clearTerminal()" class="btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;">
+                            Effacer
+                        </button>
+                    </div>
+                    <div class="terminal-body" id="terminalBody">
+                        <div class="terminal-line">$ En attente de synchronisation...</div>
+                    </div>
                 </div>
             </div>
 
             <div class="admin-card">
-                <h3>Historique des Imports</h3>
+                <h3>Statut & Historique</h3>
                 <div id="fetchHistory">
-                    <p class="loading">Chargement</p>
+                    <p class="loading">Chargement...</p>
                 </div>
             </div>
         </div>

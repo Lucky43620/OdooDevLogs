@@ -26,9 +26,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadDashboard();
     loadRepositories();
     loadCommitTypes();
+    loadMigrationVersions();
     loadModules();
     setupEventListeners();
     initKeyboardShortcuts();
+    checkSyncStatus();
 
     // Charger le statut fetch si on est sur l'onglet Admin
     let fetchStatusLoaded = false;
@@ -80,6 +82,7 @@ function setupEventListeners() {
     document.getElementById('repoSelect').addEventListener('change', onRepoChange);
     document.getElementById('branchSelect').addEventListener('change', onBranchChange);
     document.getElementById('commitTypeFilter').addEventListener('change', onSearchChange);
+    document.getElementById('commitFileExtension').addEventListener('change', onSearchChange);
     document.getElementById('searchInput').addEventListener('input', debounce(onSearchChange, 500));
     document.getElementById('authorFilter').addEventListener('input', debounce(onSearchChange, 500));
 
@@ -105,6 +108,11 @@ function setupEventListeners() {
         }
     });
     document.getElementById('migrationCommitType').addEventListener('change', () => {
+        if (document.getElementById('migrationSearch').value.trim().length >= 3) {
+            searchMigrationChanges();
+        }
+    });
+    document.getElementById('migrationFileExtension').addEventListener('change', () => {
         if (document.getElementById('migrationSearch').value.trim().length >= 3) {
             searchMigrationChanges();
         }
@@ -225,24 +233,54 @@ async function loadCommits() {
     const search = document.getElementById('searchInput').value;
     const author = document.getElementById('authorFilter').value;
     const commitType = document.getElementById('commitTypeFilter').value;
+    const fileExtension = document.getElementById('commitFileExtension').value;
     const offset = state.currentPage * 100;
 
     const container = document.getElementById('commitsList');
-    container.innerHTML = '<p class="loading">Chargement des commits</p>';
+    container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><p>Chargement des commits...</p></div>';
 
     try {
-        let url = `${API_BASE_URL}/branches/${branchId}/commits?limit=100&offset=${offset}`;
+        let url = `${API_BASE_URL}/branches/${branchId}/commits?limit=500&offset=${offset}`;
         if (search) url += `&search=${encodeURIComponent(search)}`;
         if (author) url += `&author=${encodeURIComponent(author)}`;
         if (commitType) url += `&search=${encodeURIComponent('[' + commitType + ']')}`;
 
         const response = await fetch(url);
-        const commits = await response.json();
+        let commits = await response.json();
+
+        if (fileExtension) {
+            const filteredCommits = [];
+            const batchSize = 10;
+
+            for (let i = 0; i < commits.length && filteredCommits.length < 100; i += batchSize) {
+                const batch = commits.slice(i, i + batchSize);
+                const promises = batch.map(async commit => {
+                    try {
+                        const detailResponse = await fetch(`${API_BASE_URL}/commits/${commit.id}`);
+                        const detail = await detailResponse.json();
+                        const hasFileWithExtension = detail.files_changed.some(file =>
+                            file.filename.endsWith(fileExtension)
+                        );
+                        return hasFileWithExtension ? commit : null;
+                    } catch (err) {
+                        return null;
+                    }
+                });
+
+                const results = await Promise.all(promises);
+                results.forEach(result => {
+                    if (result) filteredCommits.push(result);
+                });
+            }
+            commits = filteredCommits;
+        }
 
         if (commits.length === 0) {
             container.innerHTML = '<p class="info-text">Aucun commit trouvé</p>';
             return;
         }
+
+        commits = commits.slice(0, 100);
 
         container.innerHTML = commits.map(commit => {
             const commitType = extractCommitType(commit.message);
@@ -315,27 +353,47 @@ async function showCommitDetails(commitId) {
 
         details.innerHTML = `
             <div style="margin: 20px 0;">
-                <div style="margin-bottom: 10px;">
-                    <strong>SHA:</strong> <span class="commit-sha">${commit.sha}</span>
-                    <a href="${commit.html_url}" target="_blank" style="margin-left: 10px; color: var(--primary-color);">
-                        Voir sur GitHub →
-                    </a>
-                </div>
-                <div style="margin-bottom: 10px;">
-                    <strong>Auteur:</strong> ${commit.author_name} (${commit.author_email})
-                </div>
-                <div style="margin-bottom: 10px;">
-                    <strong>Date:</strong> ${formatDate(commit.committed_date)}
+                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 20px; padding: 20px; background: var(--gray-50); border-left: 4px solid var(--black);">
+                    <div style="flex: 1;">
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                            <span style="font-size: 0.85rem; color: var(--gray-600); font-weight: 600; text-transform: uppercase;">SHA</span>
+                            <span class="commit-sha" style="font-size: 1rem; font-weight: 700;">${commit.sha.substring(0, 12)}</span>
+                            <button onclick="copyToClipboard('${commit.sha}')" class="btn-secondary" style="padding: 5px 10px; font-size: 0.75rem;">
+                                📋 Copier
+                            </button>
+                            <a href="${commit.html_url}" target="_blank" class="btn" style="padding: 5px 15px; font-size: 0.75rem; text-decoration: none;">
+                                Voir sur GitHub →
+                            </a>
+                        </div>
+                        <div style="margin-bottom: 8px;">
+                            <span style="font-size: 0.85rem; color: var(--gray-600); font-weight: 600;">👤</span>
+                            <strong>${commit.author_name}</strong>
+                            <span style="color: var(--gray-600); margin-left: 5px;">(${commit.author_email})</span>
+                        </div>
+                        <div style="font-size: 0.9rem; color: var(--gray-600);">
+                            <span style="font-weight: 600;">📅</span> ${formatDate(commit.committed_date)}
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 15px; align-items: center; background: var(--white); padding: 15px; border: 1px solid var(--gray-200);">
+                        <div style="text-align: center;">
+                            <div class="stat-add" style="font-size: 1.5rem; font-weight: 700;">+${commit.additions}</div>
+                            <div style="font-size: 0.75rem; color: var(--gray-600); text-transform: uppercase;">Ajouts</div>
+                        </div>
+                        <div style="width: 1px; height: 40px; background: var(--gray-200);"></div>
+                        <div style="text-align: center;">
+                            <div class="stat-del" style="font-size: 1.5rem; font-weight: 700;">-${commit.deletions}</div>
+                            <div style="font-size: 0.75rem; color: var(--gray-600); text-transform: uppercase;">Suppressions</div>
+                        </div>
+                        <div style="width: 1px; height: 40px; background: var(--gray-200);"></div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 1.5rem; font-weight: 700; color: var(--black);">${commit.total_changes}</div>
+                            <div style="font-size: 0.75rem; color: var(--gray-600); text-transform: uppercase;">Total</div>
+                        </div>
+                    </div>
                 </div>
                 <div style="margin-bottom: 20px;">
-                    <strong>Message:</strong><br>
-                    <pre style="background: var(--card-bg); padding: 15px; border-radius: 8px; white-space: pre-wrap;">${escapeHtml(commit.message)}</pre>
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <strong>Statistiques:</strong><br>
-                    <span class="stat-add">➕ ${commit.additions} ajouts</span>
-                    <span class="stat-del" style="margin-left: 15px;">➖ ${commit.deletions} suppressions</span>
-                    <span style="margin-left: 15px;">📝 ${commit.total_changes} changements</span>
+                    <div style="font-size: 0.85rem; color: var(--gray-600); font-weight: 600; text-transform: uppercase; margin-bottom: 8px;">Message du commit</div>
+                    <pre style="background: var(--gray-50); padding: 15px; border-left: 4px solid var(--gray-300); white-space: pre-wrap; font-size: 0.9rem; line-height: 1.6;">${escapeHtml(commit.message)}</pre>
                 </div>
             </div>
 
@@ -654,16 +712,99 @@ async function loadCommitTypes() {
     }
 }
 
-async function loadModules() {
+async function loadMigrationVersions() {
     try {
-        const response = await fetch(`${API_BASE_URL}/modules`);
-        const modules = await response.json();
+        const response = await fetch(`${API_BASE_URL}/repositories`);
+        const repos = await response.json();
+
+        if (repos.length === 0) return;
+
+        const branchesResponse = await fetch(`${API_BASE_URL}/repositories/${repos[0].id}/branches`);
+        const branches = await branchesResponse.json();
+
+        const fromVersionSelect = document.getElementById('migrationFromVersion');
+        const toVersionSelect = document.getElementById('migrationToVersion');
+
+        const versionOptions = branches.map(b =>
+            `<option value="${b.name}">${b.name}</option>`
+        ).join('');
+
+        fromVersionSelect.innerHTML = '<option value="">Sélectionner...</option>' + versionOptions;
+        toVersionSelect.innerHTML = '<option value="">Sélectionner...</option>' + versionOptions;
+    } catch (error) {
+        console.error('Erreur lors du chargement des versions:', error);
+    }
+}
+
+async function loadModules() {
+    const cacheKey = 'odoo_modules_cache';
+    const cacheExpiry = 'odoo_modules_cache_expiry';
+    const cacheDuration = 24 * 60 * 60 * 1000;
+
+    try {
+        const cachedModules = localStorage.getItem(cacheKey);
+        const cachedExpiry = localStorage.getItem(cacheExpiry);
+
+        if (cachedModules && cachedExpiry && Date.now() < parseInt(cachedExpiry)) {
+            const modules = JSON.parse(cachedModules);
+            const moduleSelect = document.getElementById('migrationModule');
+            moduleSelect.innerHTML = '<option value="">Tous les modules...</option>' +
+                modules.map(m => `<option value="${m}">${m}</option>`).join('');
+            console.log('✅ Modules chargés depuis le cache');
+            return;
+        }
+
+        const response = await fetch(`${API_BASE_URL}/repositories`);
+        const repos = await response.json();
+
+        if (repos.length === 0) return;
+
+        const branchesResponse = await fetch(`${API_BASE_URL}/repositories/${repos[0].id}/branches`);
+        const branches = await branchesResponse.json();
+
+        if (branches.length === 0) return;
+
+        const commitsResponse = await fetch(`${API_BASE_URL}/branches/${branches[0].id}/commits?limit=500`);
+        const commits = await commitsResponse.json();
+
+        const modulesSet = new Set();
+
+        const batchSize = 10;
+        for (let i = 0; i < commits.length && modulesSet.size < 100; i += batchSize) {
+            const batch = commits.slice(i, i + batchSize);
+            const promises = batch.map(commit =>
+                fetch(`${API_BASE_URL}/commits/${commit.id}`)
+                    .then(res => res.json())
+                    .catch(err => null)
+            );
+
+            const details = await Promise.all(promises);
+
+            details.forEach(detail => {
+                if (!detail) return;
+                detail.files_changed.forEach(file => {
+                    const parts = file.filename.split('/');
+                    if (parts.length > 0 && parts[0]) {
+                        modulesSet.add(parts[0]);
+                    }
+                });
+            });
+        }
+
+        const modules = Array.from(modulesSet).sort();
+
+        localStorage.setItem(cacheKey, JSON.stringify(modules));
+        localStorage.setItem(cacheExpiry, (Date.now() + cacheDuration).toString());
 
         const moduleSelect = document.getElementById('migrationModule');
         moduleSelect.innerHTML = '<option value="">Tous les modules...</option>' +
-            modules.map(m => `<option value="${m.name}">${m.name}</option>`).join('');
+            modules.map(m => `<option value="${m}">${m}</option>`).join('');
+
+        console.log(`✅ ${modules.length} modules chargés et mis en cache`);
     } catch (error) {
         console.error('Erreur lors du chargement des modules:', error);
+        const moduleSelect = document.getElementById('migrationModule');
+        moduleSelect.innerHTML = '<option value="">Tous les modules...</option>';
     }
 }
 
@@ -676,6 +817,7 @@ async function searchMigrationChanges() {
     const toVersion = document.getElementById('migrationToVersion').value;
     const module = document.getElementById('migrationModule').value;
     const commitType = document.getElementById('migrationCommitType').value;
+    const fileExtension = document.getElementById('migrationFileExtension').value;
     const useRegex = document.getElementById('migrationRegex').checked;
     const resultsDiv = document.getElementById('migrationResults');
 
@@ -689,7 +831,7 @@ async function searchMigrationChanges() {
         return;
     }
 
-    resultsDiv.innerHTML = '<p class="loading">Recherche en cours</p>';
+    resultsDiv.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><p>Recherche en cours...</p></div>';
 
     try {
         let url = `${API_BASE_URL}/search/migration?term=${encodeURIComponent(searchTerm)}&from_version=${fromVersion}&to_version=${toVersion}`;
@@ -698,9 +840,13 @@ async function searchMigrationChanges() {
         if (useRegex) url += `&use_regex=true`;
 
         const response = await fetch(url);
-        const data = await response.json();
+        let data = await response.json();
 
-        // Ajouter à l'historique
+        if (fileExtension) {
+            data.results = data.results.filter(r => r.file.filename.endsWith(fileExtension));
+            data.count = data.results.length;
+        }
+
         addToSearchHistory(searchTerm, fromVersion, toVersion);
 
         displayMigrationResults(data, searchTerm);
@@ -723,69 +869,83 @@ function displayMigrationResults(data, searchTerm) {
         return;
     }
 
-    // Calculer des statistiques
     const totalAdditions = data.results.reduce((sum, r) => sum + r.file.additions, 0);
     const totalDeletions = data.results.reduce((sum, r) => sum + r.file.deletions, 0);
     const uniqueFiles = new Set(data.results.map(r => r.file.filename)).size;
     const uniqueModules = new Set(data.results.map(r => r.file.filename.split('/')[0])).size;
 
+    let displayedResults = 0;
+    const resultsPerPage = 20;
+
+    window.migrationResults = data.results;
+
     resultsDiv.innerHTML = `
-        <div class="migration-summary">
-            <div class="migration-header-card">
+        <div class="migration-summary" style="margin-bottom: 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 20px; padding: 20px; background: var(--gray-50); border-left: 4px solid var(--black);">
                 <div>
-                    <h3>${data.count} changement(s) trouvé(s)</h3>
-                    <div class="version-badge">${data.from_version} → ${data.to_version}</div>
+                    <h3 style="font-size: 1.5rem; margin-bottom: 10px;">${data.count} changement(s) trouvé(s)</h3>
+                    <div style="display: inline-block; padding: 6px 15px; background: var(--black); color: var(--white); font-size: 0.9rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
+                        ${data.from_version} → ${data.to_version}
+                    </div>
+                    <div style="margin-top: 10px; color: var(--gray-600); font-size: 0.9rem;">
+                        Recherche: <strong style="color: var(--black);">${escapeHtml(searchTerm)}</strong>
+                    </div>
                 </div>
-                <button onclick="exportMigrationResults()" class="btn-secondary">
+                <button onclick="exportMigrationResults()" class="btn-secondary" style="padding: 10px 20px;">
                     📥 Exporter CSV
                 </button>
             </div>
 
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <h3>Fichiers</h3>
-                    <div class="value">${uniqueFiles}</div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                <div style="padding: 20px; background: var(--white); border: 1px solid var(--gray-200); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);">
+                    <div style="font-size: 0.8rem; color: var(--gray-600); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Fichiers</div>
+                    <div style="font-size: 2rem; font-weight: 700; color: var(--black);">${uniqueFiles}</div>
                 </div>
-                <div class="stat-card">
-                    <h3>Modules</h3>
-                    <div class="value">${uniqueModules}</div>
+                <div style="padding: 20px; background: var(--white); border: 1px solid var(--gray-200); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);">
+                    <div style="font-size: 0.8rem; color: var(--gray-600); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Modules</div>
+                    <div style="font-size: 2rem; font-weight: 700; color: var(--black);">${uniqueModules}</div>
                 </div>
-                <div class="stat-card">
-                    <h3>Ajouts</h3>
-                    <div class="value stat-add">+${totalAdditions}</div>
+                <div style="padding: 20px; background: var(--white); border: 1px solid var(--gray-200); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);">
+                    <div style="font-size: 0.8rem; color: var(--gray-600); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Ajouts</div>
+                    <div style="font-size: 2rem; font-weight: 700;" class="stat-add">+${totalAdditions}</div>
                 </div>
-                <div class="stat-card">
-                    <h3>Suppressions</h3>
-                    <div class="value stat-del">-${totalDeletions}</div>
+                <div style="padding: 20px; background: var(--white); border: 1px solid var(--gray-200); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);">
+                    <div style="font-size: 0.8rem; color: var(--gray-600); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Suppressions</div>
+                    <div style="font-size: 2rem; font-weight: 700;" class="stat-del">-${totalDeletions}</div>
                 </div>
             </div>
         </div>
 
-        <div class="migration-results-list">
-            ${data.results.map((result, index) => {
+        <div class="migration-results-list" id="migrationResultsList">
+            ${data.results.slice(0, resultsPerPage).map((result, index) => {
                 const detectedChange = analyzeChange(result.file.patch, searchTerm);
                 return `
-                <div class="migration-result-card">
-                    <div class="migration-card-header">
+                <div style="background: var(--white); padding: 20px; border: 1px solid var(--gray-200); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08); margin-bottom: 20px;">
+                    <div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid var(--gray-200);">
                         <div>
-                            <div class="migration-filename">${result.file.filename}</div>
-                            <div class="migration-meta">
-                                <span class="tag">${result.file.status}</span>
+                            <div style="font-size: 1rem; font-weight: 600; color: var(--black); margin-bottom: 8px; word-break: break-all; font-family: 'Courier New', monospace;">${result.file.filename}</div>
+                            <div style="display: flex; gap: 10px; align-items: center; font-size: 0.85rem; color: var(--gray-600);">
+                                <span class="file-status status-${result.file.status}">${result.file.status}</span>
                                 <span>${result.commit.branch}</span>
                             </div>
                         </div>
                     </div>
 
-                    <div class="migration-commit-info">
+                    <div class="migration-commit-info" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                         <span class="commit-sha">${result.commit.sha.substring(0, 7)}</span>
-                        <span>${escapeHtml(result.commit.message.split('\n')[0])}</span>
+                        <span style="flex: 1; min-width: 200px;">${escapeHtml(result.commit.message.split('\n')[0])}</span>
+                        ${result.commit.html_url ? `
+                            <a href="${result.commit.html_url}" target="_blank" class="btn" style="padding: 4px 10px; font-size: 0.75rem; text-decoration: none;">
+                                Voir sur GitHub →
+                            </a>
+                        ` : ''}
                     </div>
 
-                    <div class="migration-stats">
-                        <span>👤 ${result.commit.author || 'Unknown'}</span>
+                    <div style="display: flex; gap: 15px; margin-bottom: 15px; font-size: 0.85rem; color: var(--gray-600); flex-wrap: wrap;">
+                        <span>👤 <strong style="color: var(--black);">${result.commit.author || 'Unknown'}</strong></span>
                         <span>📅 ${formatDate(result.commit.date)}</span>
-                        <span class="stat-add">+${result.file.additions}</span>
-                        <span class="stat-del">-${result.file.deletions}</span>
+                        <span class="stat-add" style="font-weight: 700;">+${result.file.additions}</span>
+                        <span class="stat-del" style="font-weight: 700;">-${result.file.deletions}</span>
                     </div>
 
                     ${detectedChange ? `
@@ -801,30 +961,123 @@ function displayMigrationResults(data, searchTerm) {
                         </div>
                     ` : ''}
 
-                    <div class="migration-actions">
-                        <button onclick="showMigrationDiff(${index})" class="btn">
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <button onclick="showMigrationDiff(${index})" class="btn" style="padding: 8px 15px; font-size: 0.85rem;">
                             Voir le diff complet
                         </button>
-                        <button onclick="copyDiff(${index})" class="btn-secondary">
+                        <button onclick="copyDiff(${index})" class="btn-secondary" style="padding: 8px 15px; font-size: 0.85rem;">
                             📋 Copier
                         </button>
                     </div>
 
-                    <div class="diff-viewer" id="migration-diff-${index}">
+                    <div class="diff-viewer" id="migration-diff-${index}" style="display: none; margin-top: 15px; border-top: 1px solid var(--gray-200); padding-top: 15px;">
                         ${highlightSearchTerm(renderDiffSideBySide(result.file.patch, data.from_version, data.to_version), searchTerm)}
                     </div>
                 </div>
             `}).join('')}
         </div>
+
+        ${data.results.length > resultsPerPage ? `
+            <div style="text-align: center; margin: 30px 0;">
+                <button id="loadMoreResults" class="btn" style="padding: 12px 30px;">
+                    Charger plus de résultats (${data.results.length - resultsPerPage} restants)
+                </button>
+            </div>
+        ` : ''}
     `;
 
-    // Stocker les résultats
-    window.migrationResults = data.results;
+    displayedResults = Math.min(resultsPerPage, data.results.length);
+
+    if (data.results.length > resultsPerPage) {
+        const loadMoreBtn = document.getElementById('loadMoreResults');
+        loadMoreBtn?.addEventListener('click', () => {
+            const nextBatch = data.results.slice(displayedResults, displayedResults + resultsPerPage);
+            const resultsList = document.getElementById('migrationResultsList');
+
+            nextBatch.forEach((result, i) => {
+                const index = displayedResults + i;
+                const detectedChange = analyzeChange(result.file.patch, searchTerm);
+
+                const resultHTML = `
+                <div style="background: var(--white); padding: 20px; border: 1px solid var(--gray-200); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08); margin-bottom: 20px;">
+                    <div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid var(--gray-200);">
+                        <div>
+                            <div style="font-size: 1rem; font-weight: 600; color: var(--black); margin-bottom: 8px; word-break: break-all; font-family: 'Courier New', monospace;">${result.file.filename}</div>
+                            <div style="display: flex; gap: 10px; align-items: center; font-size: 0.85rem; color: var(--gray-600);">
+                                <span class="file-status status-${result.file.status}">${result.file.status}</span>
+                                <span>${result.commit.branch}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="migration-commit-info" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                        <span class="commit-sha">${result.commit.sha.substring(0, 7)}</span>
+                        <span style="flex: 1; min-width: 200px;">${escapeHtml(result.commit.message.split('\n')[0])}</span>
+                        ${result.commit.html_url ? `
+                            <a href="${result.commit.html_url}" target="_blank" class="btn" style="padding: 4px 10px; font-size: 0.75rem; text-decoration: none;">
+                                Voir sur GitHub →
+                            </a>
+                        ` : ''}
+                    </div>
+
+                    <div style="display: flex; gap: 15px; margin-bottom: 15px; font-size: 0.85rem; color: var(--gray-600); flex-wrap: wrap;">
+                        <span>👤 <strong style="color: var(--black);">${result.commit.author || 'Unknown'}</strong></span>
+                        <span>📅 ${formatDate(result.commit.date)}</span>
+                        <span class="stat-add" style="font-weight: 700;">+${result.file.additions}</span>
+                        <span class="stat-del" style="font-weight: 700;">-${result.file.deletions}</span>
+                    </div>
+
+                    ${detectedChange ? `
+                        <div class="diff-comparison">
+                            <div class="diff-version">
+                                <div class="diff-version-title">${data.from_version}</div>
+                                <div class="diff-version-content">${escapeHtml(detectedChange.old)}</div>
+                            </div>
+                            <div class="diff-version">
+                                <div class="diff-version-title">${data.to_version}</div>
+                                <div class="diff-version-content">${escapeHtml(detectedChange.new)}</div>
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <button onclick="showMigrationDiff(${index})" class="btn" style="padding: 8px 15px; font-size: 0.85rem;">
+                            Voir le diff complet
+                        </button>
+                        <button onclick="copyDiff(${index})" class="btn-secondary" style="padding: 8px 15px; font-size: 0.85rem;">
+                            📋 Copier
+                        </button>
+                    </div>
+
+                    <div class="diff-viewer" id="migration-diff-${index}" style="display: none; margin-top: 15px; border-top: 1px solid var(--gray-200); padding-top: 15px;">
+                        ${highlightSearchTerm(renderDiffSideBySide(result.file.patch, data.from_version, data.to_version), searchTerm)}
+                    </div>
+                </div>
+                `;
+
+                resultsList.insertAdjacentHTML('beforeend', resultHTML);
+            });
+
+            displayedResults += nextBatch.length;
+
+            if (displayedResults >= data.results.length) {
+                loadMoreBtn.remove();
+            } else {
+                loadMoreBtn.textContent = `Charger plus de résultats (${data.results.length - displayedResults} restants)`;
+            }
+
+            showNotification(`${nextBatch.length} résultats supplémentaires chargés`, 'success');
+        });
+    }
 }
 
 function showMigrationDiff(index) {
     const diffViewer = document.getElementById(`migration-diff-${index}`);
-    diffViewer.classList.toggle('show');
+    if (diffViewer.style.display === 'none') {
+        diffViewer.style.display = 'block';
+    } else {
+        diffViewer.style.display = 'none';
+    }
 }
 
 function copyDiff(index) {
@@ -986,23 +1239,21 @@ function exportMigrationResults() {
 
     const csvRows = [];
 
-    // En-têtes
-    csvRows.push(['SHA', 'Date', 'Auteur', 'Message', 'Branche', 'Fichier', 'Status', 'Additions', 'Deletions'].join(','));
+    csvRows.push(['SHA', 'Date', 'Auteur', 'Message', 'Branche', 'Fichier', 'Status', 'Additions', 'Deletions'].join(';'));
 
-    // Données
     window.migrationResults.forEach(result => {
         const row = [
             result.commit.sha.substring(0, 7),
-            result.commit.date,
-            `"${(result.commit.author || '').replace(/"/g, '""')}"`,
-            `"${result.commit.message.split('\n')[0].replace(/"/g, '""')}"`,
-            result.commit.branch,
-            `"${result.file.filename.replace(/"/g, '""')}"`,
-            result.file.status,
-            result.file.additions,
-            result.file.deletions
+            result.commit.date || '',
+            (result.commit.author || '').replace(/;/g, ','),
+            result.commit.message.split('\n')[0].replace(/;/g, ',').replace(/"/g, '""'),
+            result.commit.branch || '',
+            result.file.filename.replace(/;/g, ','),
+            result.file.status || '',
+            result.file.additions || 0,
+            result.file.deletions || 0
         ];
-        csvRows.push(row.join(','));
+        csvRows.push(row.join(';'));
     });
 
     downloadCSV(csvRows.join('\n'), 'migration_results.csv');
@@ -1016,20 +1267,18 @@ function exportModuleAnalytics() {
 
     const csvRows = [];
 
-    // En-têtes
-    csvRows.push(['Module', 'Commits', 'Contributeurs', 'Additions', 'Deletions', 'Dernière Modification'].join(','));
+    csvRows.push(['Module', 'Commits', 'Contributeurs', 'Additions', 'Deletions', 'Dernière Modification'].join(';'));
 
-    // Données
     window.moduleAnalyticsData.forEach(module => {
         const row = [
-            `"${module.module}"`,
+            module.module.replace(/;/g, ','),
             module.commits,
             module.contributors,
             module.additions,
             module.deletions,
             module.last_modified || ''
         ];
-        csvRows.push(row.join(','));
+        csvRows.push(row.join(';'));
     });
 
     downloadCSV(csvRows.join('\n'), 'module_analytics.csv');
@@ -1043,20 +1292,18 @@ function exportDetectedChanges() {
 
     const csvRows = [];
 
-    // En-têtes
-    csvRows.push(['Type', 'SHA', 'Date', 'Auteur', 'Message', 'Fichier'].join(','));
+    csvRows.push(['Type', 'SHA', 'Date', 'Auteur', 'Message', 'Fichier'].join(';'));
 
-    // Données
     window.detectedChangesData.forEach(change => {
         const row = [
             change.type,
             change.commit_sha,
             change.date,
-            `"${change.author.replace(/"/g, '""')}"`,
-            `"${change.commit_message.replace(/"/g, '""')}"`,
-            `"${change.filename.replace(/"/g, '""')}"`
+            change.author.replace(/;/g, ','),
+            change.commit_message.replace(/;/g, ',').replace(/"/g, '""'),
+            change.filename.replace(/;/g, ',')
         ];
-        csvRows.push(row.join(','));
+        csvRows.push(row.join(';'));
     });
 
     downloadCSV(csvRows.join('\n'), 'detected_changes.csv');
@@ -1360,14 +1607,26 @@ document.addEventListener('DOMContentLoaded', () => {
 // RACCOURCIS CLAVIER
 // ============================================================
 function initKeyboardShortcuts() {
+    let currentResultIndex = -1;
+    const results = [];
+
     document.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+            if (e.key !== 'Escape') return;
+        }
+
         // Ctrl/Cmd + K: Focus sur la recherche
         if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
             e.preventDefault();
-            const searchInput = document.getElementById('migrationSearch');
-            if (searchInput) {
-                searchInput.focus();
-                searchInput.select();
+            const activeTab = document.querySelector('.tab-content.active');
+            if (activeTab && activeTab.id === 'migration') {
+                const searchInput = document.getElementById('migrationSearch');
+                searchInput?.focus();
+                searchInput?.select();
+            } else if (activeTab && activeTab.id === 'commits') {
+                const searchInput = document.getElementById('searchInput');
+                searchInput?.focus();
+                searchInput?.select();
             }
         }
 
@@ -1376,14 +1635,19 @@ function initKeyboardShortcuts() {
             e.preventDefault();
             if (window.migrationResults && window.migrationResults.length > 0) {
                 exportMigrationResults();
+                showNotification('Export CSV en cours...', 'info');
             }
         }
 
         // Escape: Fermer les modals/diffs
         if (e.key === 'Escape') {
-            const openDiffs = document.querySelectorAll('.diff-viewer.show');
-            openDiffs.forEach(diff => diff.classList.remove('show'));
-            closeModal();
+            const modal = document.getElementById('commitModal');
+            if (modal?.classList.contains('active')) {
+                closeModal();
+                return;
+            }
+            const openDiffs = document.querySelectorAll('.diff-viewer[style*="display: block"]');
+            openDiffs.forEach(diff => diff.style.display = 'none');
         }
 
         // Ctrl/Cmd + H: Afficher l'historique de recherche
@@ -1397,17 +1661,113 @@ function initKeyboardShortcuts() {
             e.preventDefault();
             showFavorites();
         }
+
+        // Navigation J/K dans les résultats (comme Vim)
+        if (e.key === 'j' || e.key === 'k') {
+            const activeTab = document.querySelector('.tab-content.active');
+            if (activeTab?.id === 'migration') {
+                const resultCards = document.querySelectorAll('.migration-results-list > div');
+                if (resultCards.length === 0) return;
+
+                e.preventDefault();
+
+                if (e.key === 'j') {
+                    currentResultIndex = Math.min(currentResultIndex + 1, resultCards.length - 1);
+                } else {
+                    currentResultIndex = Math.max(currentResultIndex - 1, 0);
+                }
+
+                resultCards.forEach((card, i) => {
+                    if (i === currentResultIndex) {
+                        card.style.outline = '3px solid var(--black)';
+                        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } else {
+                        card.style.outline = 'none';
+                    }
+                });
+            }
+        }
+
+        // Entrée pour ouvrir le diff du résultat sélectionné
+        if (e.key === 'Enter' && currentResultIndex >= 0) {
+            const activeTab = document.querySelector('.tab-content.active');
+            if (activeTab?.id === 'migration') {
+                e.preventDefault();
+                showMigrationDiff(currentResultIndex);
+            }
+        }
+
+        // Ctrl/Cmd + / : Afficher les raccourcis
+        if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+            e.preventDefault();
+            showKeyboardShortcuts();
+        }
+
+        // Chiffres 1-6 : Changer d'onglet
+        if (e.key >= '1' && e.key <= '6' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            const tabs = ['dashboard', 'commits', 'migration', 'compare', 'analytics', 'admin'];
+            const index = parseInt(e.key) - 1;
+            if (tabs[index]) {
+                document.querySelector(`[data-tab="${tabs[index]}"]`)?.click();
+            }
+        }
     });
 
-    // Afficher les raccourcis disponibles
     console.log(`
 🎹 Raccourcis clavier disponibles:
   • Ctrl/Cmd + K : Focus recherche
   • Ctrl/Cmd + E : Export CSV
   • Ctrl/Cmd + H : Historique
   • Ctrl/Cmd + B : Favoris
+  • Ctrl/Cmd + 1-6 : Changer d'onglet
+  • Ctrl/Cmd + / : Afficher les raccourcis
+  • J/K : Naviguer dans les résultats (Vim style)
+  • Entrée : Ouvrir le diff sélectionné
   • Escape : Fermer
     `);
+}
+
+function showKeyboardShortcuts() {
+    const modal = document.getElementById('commitModal');
+    const details = document.getElementById('commitDetails');
+
+    details.innerHTML = `
+        <div style="padding: 20px;">
+            <h2 style="margin-bottom: 20px;">⌨️ Raccourcis clavier</h2>
+            <div style="display: grid; gap: 15px;">
+                <div style="padding: 15px; background: var(--gray-50); border-left: 4px solid var(--black);">
+                    <strong>Ctrl/Cmd + K</strong> : Focus sur la recherche
+                </div>
+                <div style="padding: 15px; background: var(--gray-50); border-left: 4px solid var(--black);">
+                    <strong>Ctrl/Cmd + E</strong> : Exporter en CSV
+                </div>
+                <div style="padding: 15px; background: var(--gray-50); border-left: 4px solid var(--black);">
+                    <strong>Ctrl/Cmd + H</strong> : Afficher l'historique
+                </div>
+                <div style="padding: 15px; background: var(--gray-50); border-left: 4px solid var(--black);">
+                    <strong>Ctrl/Cmd + B</strong> : Afficher les favoris
+                </div>
+                <div style="padding: 15px; background: var(--gray-50); border-left: 4px solid var(--black);">
+                    <strong>Ctrl/Cmd + 1-6</strong> : Changer d'onglet
+                </div>
+                <div style="padding: 15px; background: var(--gray-50); border-left: 4px solid var(--black);">
+                    <strong>Ctrl/Cmd + /</strong> : Afficher cette aide
+                </div>
+                <div style="padding: 15px; background: var(--gray-50); border-left: 4px solid var(--green);">
+                    <strong>J / K</strong> : Naviguer dans les résultats (style Vim)
+                </div>
+                <div style="padding: 15px; background: var(--gray-50); border-left: 4px solid var(--green);">
+                    <strong>Entrée</strong> : Ouvrir le diff du résultat sélectionné
+                </div>
+                <div style="padding: 15px; background: var(--gray-50); border-left: 4px solid var(--red);">
+                    <strong>Escape</strong> : Fermer les modals et diffs
+                </div>
+            </div>
+        </div>
+    `;
+
+    modal.classList.add('active');
 }
 
 // ============================================================
@@ -1645,126 +2005,200 @@ document.addEventListener('DOMContentLoaded', () => {
 // ============================================================
 // ADMIN PANEL - FETCH MANAGEMENT
 // ============================================================
+let syncEventSource = null;
+
 async function triggerFetch(mode) {
     try {
-        showNotification(`Lancement du fetch ${mode}...`, 'info');
+        const incrementalBtn = document.getElementById('incrementalBtn');
+        const fullBtn = document.getElementById('fullBtn');
 
-        const response = await fetch(`${API_BASE_URL}/admin/fetch?mode=${mode}`, {
-            method: 'POST'
+        incrementalBtn.disabled = true;
+        fullBtn.disabled = true;
+
+        const repoSelect = document.getElementById('adminRepoSelect');
+        const branchSelect = document.getElementById('adminBranchSelect');
+
+        const selectedRepos = Array.from(repoSelect.selectedOptions).map(opt => opt.value);
+        const selectedBranches = Array.from(branchSelect.selectedOptions).map(opt => opt.value);
+
+        if (selectedRepos.length === 0 || selectedBranches.length === 0) {
+            showNotification('Veuillez sélectionner au moins un dépôt et une branche', 'error');
+            incrementalBtn.disabled = false;
+            fullBtn.disabled = false;
+            return;
+        }
+
+        showNotification(`Lancement de la synchronisation ${mode}...`, 'info');
+        addTerminalLine(`$ Démarrage de la synchronisation ${mode}...`, 'prompt');
+        addTerminalLine(`$ Dépôts: ${selectedRepos.join(', ')}`, 'info');
+        addTerminalLine(`$ Branches: ${selectedBranches.join(', ')}`, 'info');
+
+        const response = await fetch(`${API_BASE_URL}/admin/fetch`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                mode: mode,
+                repositories: selectedRepos,
+                branches: selectedBranches
+            })
         });
 
         const data = await response.json();
 
-        if (response.ok) {
-            showNotification(data.message, 'success');
+        if (data.status === 'already_running') {
+            showNotification(data.message, 'warning');
+            addTerminalLine(data.message, 'warning');
+            return;
+        }
 
-            // Stopper l'interval existant s'il y en a un
-            if (window.fetchStatusInterval) {
-                clearInterval(window.fetchStatusInterval);
-            }
+        if (response.ok && data.status === 'started') {
+            showSyncIndicator();
+            showNotification('Synchronisation démarrée', 'success');
+            addTerminalLine(`✅ Synchronisation démarrée (PID: ${data.pid})`, 'success');
 
-            // Afficher le bouton stop
-            const stopBtn = document.getElementById('stopIntervalBtn');
-            if (stopBtn) stopBtn.style.display = 'inline-block';
+            startStreamingLogs();
 
-            // Attendre 2 secondes puis recharger le statut
-            setTimeout(() => {
-                loadFetchStatus();
-                // Recharger toutes les 5 secondes pendant 30 secondes
-                window.fetchStatusInterval = setInterval(() => {
-                    loadFetchStatus();
-                }, 5000);
-                setTimeout(() => {
-                    clearInterval(window.fetchStatusInterval);
-                    window.fetchStatusInterval = null;
-                    if (stopBtn) stopBtn.style.display = 'none';
-                }, 30000);
-            }, 2000);
         } else {
-            showNotification('Erreur lors du démarrage du fetch', 'error');
+            showNotification('Erreur lors du démarrage', 'error');
+            addTerminalLine('❌ Erreur lors du démarrage de la synchronisation', 'error');
+            incrementalBtn.disabled = false;
+            fullBtn.disabled = false;
         }
     } catch (error) {
         console.error('Erreur:', error);
         showNotification('Erreur de connexion à l\'API', 'error');
+        addTerminalLine(`❌ Erreur: ${error.message}`, 'error');
+        document.getElementById('incrementalBtn').disabled = false;
+        document.getElementById('fullBtn').disabled = false;
+    }
+}
+
+function showSyncIndicator() {
+    let indicator = document.getElementById('syncIndicatorGlobal');
+    if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.id = 'syncIndicatorGlobal';
+        indicator.className = 'sync-indicator';
+        indicator.innerHTML = '<div class="spinner-small"></div><span>Synchronisation en cours...</span>';
+        document.body.appendChild(indicator);
+    }
+}
+
+function hideSyncIndicator() {
+    const indicator = document.getElementById('syncIndicatorGlobal');
+    if (indicator) {
+        indicator.remove();
+    }
+}
+
+function startStreamingLogs() {
+    if (syncEventSource) {
+        syncEventSource.close();
+    }
+
+    syncEventSource = new EventSource(`${API_BASE_URL}/admin/fetch-stream`);
+
+    syncEventSource.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            addTerminalLine(data.message, data.type);
+
+            if (data.type === 'complete') {
+                syncEventSource.close();
+                syncEventSource = null;
+                hideSyncIndicator();
+                document.getElementById('incrementalBtn').disabled = false;
+                document.getElementById('fullBtn').disabled = false;
+                showNotification('Synchronisation terminée', 'success');
+                loadFetchStatus();
+            }
+        } catch (err) {
+            console.error('Erreur parsing SSE:', err);
+        }
+    };
+
+    syncEventSource.onerror = (error) => {
+        console.error('Erreur SSE:', error);
+        syncEventSource.close();
+        syncEventSource = null;
+        hideSyncIndicator();
+        addTerminalLine('❌ Connexion au stream interrompue', 'error');
+        document.getElementById('incrementalBtn').disabled = false;
+        document.getElementById('fullBtn').disabled = false;
+    };
+}
+
+function addTerminalLine(message, type = 'info') {
+    const terminalBody = document.getElementById('terminalBody');
+    if (!terminalBody) return;
+
+    const line = document.createElement('div');
+    line.className = `terminal-line ${type}`;
+    line.textContent = message;
+
+    terminalBody.appendChild(line);
+    terminalBody.scrollTop = terminalBody.scrollHeight;
+}
+
+function clearTerminal() {
+    const terminalBody = document.getElementById('terminalBody');
+    if (terminalBody) {
+        terminalBody.innerHTML = '<div class="terminal-line">$ Terminal effacé</div>';
+    }
+}
+
+async function checkSyncStatus() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/fetch-running`);
+        const data = await response.json();
+
+        if (data.running) {
+            showSyncIndicator();
+            addTerminalLine('⚠️  Une synchronisation est en cours (détectée au chargement)', 'warning');
+            startStreamingLogs();
+        }
+    } catch (error) {
+        console.error('Erreur vérification sync:', error);
     }
 }
 
 async function loadFetchStatus() {
-    const statusDiv = document.getElementById('fetchStatus');
     const historyDiv = document.getElementById('fetchHistory');
 
-    if (!statusDiv) return;
+    if (!historyDiv) return;
 
     try {
         const response = await fetch(`${API_BASE_URL}/admin/fetch-status`);
         const data = await response.json();
-
-        // Afficher le statut actuel
-        if (data.last_fetch) {
-            const lastFetch = data.last_fetch;
-            const isRunning = lastFetch.status === 'running';
-
-            statusDiv.innerHTML = `
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
-                    <div>
-                        <div style="font-size: 12px; color: var(--color-gray-600); margin-bottom: 5px;">STATUT</div>
-                        <span class="status-badge status-${lastFetch.status}">${lastFetch.status}</span>
-                    </div>
-                    <div>
-                        <div style="font-size: 12px; color: var(--color-gray-600); margin-bottom: 5px;">MODE</div>
-                        <strong>${lastFetch.mode || 'incremental'}</strong>
-                    </div>
-                    <div>
-                        <div style="font-size: 12px; color: var(--color-gray-600); margin-bottom: 5px;">COMMITS IMPORTÉS</div>
-                        <strong>${lastFetch.commits_imported || 0}</strong>
-                    </div>
-                </div>
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--color-gray-200);">
-                    <div style="font-size: 12px; color: var(--color-gray-600);">DERNIER IMPORT</div>
-                    <div style="margin-top: 5px;">
-                        ${formatDate(lastFetch.started_at)}
-                        ${lastFetch.duration ? `• Durée: ${Math.round(lastFetch.duration)}s` : ''}
-                    </div>
-                    ${lastFetch.error_message ? `
-                        <div style="margin-top: 10px; padding: 10px; background: var(--color-gray-100); border: 1px dashed var(--color-black);">
-                            <strong>Erreur:</strong> ${escapeHtml(lastFetch.error_message)}
+        if (data.logs && data.logs.length > 0) {
+            historyDiv.innerHTML = `
+                <div class="history-list">
+                    ${data.logs.map(log => `
+                        <div class="history-item">
+                            <div class="history-item-header">
+                                <span class="history-item-status" style="color: ${log.status === 'success' ? 'var(--green)' : log.status === 'failed' ? 'var(--red)' : 'var(--gray-600)'}; font-weight: 700;">
+                                    ${log.status === 'success' ? '✅' : log.status === 'failed' ? '❌' : '⏳'} ${log.status.toUpperCase()}
+                                </span>
+                                <span class="history-item-time">${formatDate(log.started_at)}</span>
+                            </div>
+                            <div class="history-item-details">
+                                ${log.branch_name || 'Toutes les branches'} •
+                                <strong>${log.commits_imported || 0}</strong> commits importés
+                                ${log.duration ? ` • Durée: ${Math.round(log.duration)}s` : ''}
+                                ${log.error_message ? `<br><span style="color: var(--red);">Erreur: ${escapeHtml(log.error_message)}</span>` : ''}
+                            </div>
                         </div>
-                    ` : ''}
+                    `).join('')}
                 </div>
             `;
         } else {
-            statusDiv.innerHTML = '<p class="info-text">Aucun import trouvé</p>';
-        }
-
-        // Afficher l'historique
-        if (historyDiv) {
-            if (data.logs && data.logs.length > 0) {
-                historyDiv.innerHTML = `
-                    <div class="history-list">
-                        ${data.logs.map(log => `
-                            <div class="history-item">
-                                <div class="history-item-header">
-                                    <span class="history-item-status">${log.status}</span>
-                                    <span class="history-item-time">${formatDate(log.started_at)}</span>
-                                </div>
-                                <div class="history-item-details">
-                                    ${log.branch_name || 'N/A'} •
-                                    <strong>${log.commits_imported || 0}</strong> commits
-                                    ${log.duration ? ` • ${Math.round(log.duration)}s` : ''}
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                `;
-            } else {
-                historyDiv.innerHTML = '<p class="info-text">Aucun historique disponible</p>';
-            }
+            historyDiv.innerHTML = '<p class="info-text">Aucun historique disponible</p>';
         }
     } catch (error) {
         console.error('Erreur lors du chargement du statut:', error);
-        if (statusDiv) {
-            statusDiv.innerHTML = '<p class="info-text">Erreur lors du chargement du statut</p>';
-        }
+        historyDiv.innerHTML = '<p class="info-text">Erreur lors du chargement du statut</p>';
     }
 }
 
