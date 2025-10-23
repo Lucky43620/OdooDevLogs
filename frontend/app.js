@@ -70,6 +70,11 @@ function initTabs() {
             // Charger les données selon le tab
             if (tabName === 'stats') {
                 loadDetailedStats();
+            } else if (tabName === 'analytics') {
+                const moduleAnalyticsRepo = document.getElementById('moduleAnalyticsRepo');
+                if (moduleAnalyticsRepo && moduleAnalyticsRepo.value === 'all') {
+                    onModuleAnalyticsRepoChange();
+                }
             }
         });
     });
@@ -92,34 +97,11 @@ function setupEventListeners() {
     document.getElementById('compareBtn').addEventListener('click', onCompareClick);
 
     // Migration tab
-    document.getElementById('migrationSearch').addEventListener('input', debounce(searchMigrationChanges, 800));
-    document.getElementById('migrationFromVersion').addEventListener('change', () => {
-        if (document.getElementById('migrationSearch').value.trim().length >= 3) {
+    document.getElementById('migrationSearch').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
             searchMigrationChanges();
         }
     });
-    document.getElementById('migrationToVersion').addEventListener('change', () => {
-        if (document.getElementById('migrationSearch').value.trim().length >= 3) {
-            searchMigrationChanges();
-        }
-    });
-    document.getElementById('migrationModule').addEventListener('change', () => {
-        if (document.getElementById('migrationSearch').value.trim().length >= 3) {
-            searchMigrationChanges();
-        }
-    });
-    document.getElementById('migrationCommitType').addEventListener('change', () => {
-        if (document.getElementById('migrationSearch').value.trim().length >= 3) {
-            searchMigrationChanges();
-        }
-    });
-    document.getElementById('migrationFileExtension').addEventListener('change', () => {
-        if (document.getElementById('migrationSearch').value.trim().length >= 3) {
-            searchMigrationChanges();
-        }
-    });
-
-    // Modal - plus besoin car géré dans le HTML avec onclick
 }
 
 // ============================================================
@@ -182,8 +164,21 @@ async function loadRepositories() {
             `<option value="${repo.id}">${repo.full_name}</option>`
         ).join('');
 
-        repoSelect.innerHTML = '<option value="">Sélectionner un dépôt...</option>' + options;
-        compareRepoSelect.innerHTML = '<option value="">Sélectionner un dépôt...</option>' + options;
+        repoSelect.innerHTML = '<option value="all" selected>Tous les dépôts</option>' + options;
+        compareRepoSelect.innerHTML = '<option value="">Sélectionner un dépôt...</option><option value="all">Tous les dépôts</option>' + options;
+
+        const allBranches = new Set();
+        for (const repo of state.repositories) {
+            const branchesResponse = await fetch(`${API_BASE_URL}/repositories/${repo.id}/branches`);
+            const branches = await branchesResponse.json();
+            branches.forEach(b => allBranches.add(b.name));
+        }
+
+        const branchSelect = document.getElementById('branchSelect');
+        state.branches = Array.from(allBranches).map(name => ({ id: `all:${name}`, name }));
+        branchSelect.innerHTML = '<option value="">Sélectionner une branche...</option>' +
+            state.branches.map(branch => `<option value="${branch.id}">${branch.name}</option>`).join('');
+        branchSelect.disabled = false;
     } catch (error) {
         console.error('Erreur lors du chargement des dépôts:', error);
     }
@@ -197,6 +192,31 @@ async function onRepoChange(e) {
         branchSelect.disabled = true;
         branchSelect.innerHTML = '<option value="">Sélectionner une branche...</option>';
         document.getElementById('commitsList').innerHTML = '<p class="info-text">Sélectionnez un dépôt et une branche</p>';
+        return;
+    }
+
+    if (repoId === 'all') {
+        try {
+            const reposResponse = await fetch(`${API_BASE_URL}/repositories`);
+            const repos = await reposResponse.json();
+
+            const allBranches = new Set();
+            for (const repo of repos) {
+                const branchesResponse = await fetch(`${API_BASE_URL}/repositories/${repo.id}/branches`);
+                const branches = await branchesResponse.json();
+                branches.forEach(b => allBranches.add(b.name));
+            }
+
+            state.branches = Array.from(allBranches).map(name => ({ id: `all:${name}`, name }));
+
+            branchSelect.innerHTML = '<option value="">Sélectionner une branche...</option>' +
+                state.branches.map(branch =>
+                    `<option value="${branch.id}">${branch.name}</option>`
+                ).join('');
+            branchSelect.disabled = false;
+        } catch (error) {
+            console.error('Erreur lors du chargement des branches:', error);
+        }
         return;
     }
 
@@ -242,7 +262,14 @@ async function loadCommits() {
     container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><p>Chargement des commits...</p></div>';
 
     try {
-        let url = `${API_BASE_URL}/branches/${branchId}/commits?limit=500&offset=${offset}`;
+        let url;
+        if (branchId.toString().startsWith('all:')) {
+            const branchName = branchId.toString().substring(4);
+            url = `${API_BASE_URL}/commits/all?branch_name=${encodeURIComponent(branchName)}&limit=500&offset=${offset}`;
+        } else {
+            url = `${API_BASE_URL}/branches/${branchId}/commits?limit=500&offset=${offset}`;
+        }
+
         if (search) url += `&search=${encodeURIComponent(search)}`;
         if (author) url += `&author=${encodeURIComponent(author)}`;
         if (commitType) url += `&search=${encodeURIComponent('[' + commitType + ']')}`;
@@ -459,6 +486,35 @@ async function onCompareRepoChange(e) {
         return;
     }
 
+    if (repoId === 'all') {
+        try {
+            const reposResponse = await fetch(`${API_BASE_URL}/repositories`);
+            const repos = await reposResponse.json();
+
+            const allBranches = new Set();
+            for (const repo of repos) {
+                const branchesResponse = await fetch(`${API_BASE_URL}/repositories/${repo.id}/branches`);
+                const branches = await branchesResponse.json();
+                branches.forEach(b => allBranches.add(b.name));
+            }
+
+            const options = Array.from(allBranches).map(name =>
+                `<option value="${name}">${name}</option>`
+            ).join('');
+
+            branch1Select.innerHTML = '<option value="">Sélectionner...</option>' + options;
+            branch2Select.innerHTML = '<option value="">Sélectionner...</option>' + options;
+            branch1Select.disabled = false;
+            branch2Select.disabled = false;
+
+            branch1Select.addEventListener('change', updateCompareBtn);
+            branch2Select.addEventListener('change', updateCompareBtn);
+        } catch (error) {
+            console.error('Erreur lors du chargement des branches:', error);
+        }
+        return;
+    }
+
     try {
         const response = await fetch(`${API_BASE_URL}/repositories/${repoId}/branches`);
         const branches = await response.json();
@@ -496,9 +552,13 @@ async function onCompareClick() {
     results.innerHTML = '<p class="loading">Comparaison en cours</p>';
 
     try {
-        const response = await fetch(
-            `${API_BASE_URL}/compare?repo_id=${repoId}&branch1=${branch1}&branch2=${branch2}&limit=100`
-        );
+        let url;
+        if (repoId === 'all') {
+            url = `${API_BASE_URL}/compare/all?branch1=${branch1}&branch2=${branch2}&limit=100`;
+        } else {
+            url = `${API_BASE_URL}/compare?repo_id=${repoId}&branch1=${branch1}&branch2=${branch2}&limit=100`;
+        }
+        const response = await fetch(url);
         const data = await response.json();
 
         results.innerHTML = `
@@ -878,9 +938,12 @@ async function searchMigrationChanges() {
 
     try {
         let url = `${API_BASE_URL}/search/migration?term=${encodeURIComponent(searchTerm)}&from_version=${fromVersion}&to_version=${toVersion}`;
-        if (module) url += `&module=${module}`;
+        if (module) url += `&module=${encodeURIComponent(module)}`;
         if (commitType) url += `&commit_type=${commitType}`;
         if (useRegex) url += `&use_regex=true`;
+
+        console.log('Migration search URL:', url);
+        console.log('Module filter:', module);
 
         const response = await fetch(url);
         let data = await response.json();
@@ -995,11 +1058,11 @@ function displayMigrationResults(data, searchTerm) {
                         <div class="diff-comparison">
                             <div class="diff-version">
                                 <div class="diff-version-title">${data.from_version}</div>
-                                <div class="diff-version-content">${escapeHtml(detectedChange.old)}</div>
+                                <div class="diff-version-content">${detectedChange.oldHtml}</div>
                             </div>
                             <div class="diff-version">
                                 <div class="diff-version-title">${data.to_version}</div>
-                                <div class="diff-version-content">${escapeHtml(detectedChange.new)}</div>
+                                <div class="diff-version-content">${detectedChange.newHtml}</div>
                             </div>
                         </div>
                     ` : ''}
@@ -1074,11 +1137,11 @@ function displayMigrationResults(data, searchTerm) {
                         <div class="diff-comparison">
                             <div class="diff-version">
                                 <div class="diff-version-title">${data.from_version}</div>
-                                <div class="diff-version-content">${escapeHtml(detectedChange.old)}</div>
+                                <div class="diff-version-content">${detectedChange.oldHtml}</div>
                             </div>
                             <div class="diff-version">
                                 <div class="diff-version-title">${data.to_version}</div>
-                                <div class="diff-version-content">${escapeHtml(detectedChange.new)}</div>
+                                <div class="diff-version-content">${detectedChange.newHtml}</div>
                             </div>
                         </div>
                     ` : ''}
@@ -1148,13 +1211,13 @@ function copyToClipboard(text) {
 function showNotification(message, type = 'success') {
     const existingNotifications = document.querySelectorAll('.notification');
     existingNotifications.forEach((notif, index) => {
-        notif.style.bottom = `${(index + 1) * 70 + 20}px`;
+        notif.style.top = `${(index + 1) * 70 + 20}px`;
     });
 
     const notification = document.createElement('div');
     notification.className = `notification notification-${type}`;
     notification.textContent = message;
-    notification.style.bottom = '20px';
+    notification.style.top = '20px';
     document.body.appendChild(notification);
 
     setTimeout(() => {
@@ -1167,7 +1230,7 @@ function showNotification(message, type = 'success') {
             notification.remove();
             const remainingNotifs = document.querySelectorAll('.notification');
             remainingNotifs.forEach((notif, index) => {
-                notif.style.bottom = `${index * 70 + 20}px`;
+                notif.style.top = `${index * 70 + 20}px`;
             });
         }, 300);
     }, 2000);
@@ -1203,7 +1266,6 @@ function analyzeChange(patch, searchTerm) {
     const oldLines = [];
     const newLines = [];
 
-    // Extraire les lignes qui contiennent le terme de recherche
     for (let line of lines) {
         const lowerLine = line.toLowerCase();
         const lowerTerm = searchTerm.toLowerCase();
@@ -1217,15 +1279,42 @@ function analyzeChange(patch, searchTerm) {
         }
     }
 
-    // Si on a trouvé des changements
     if (oldLines.length > 0 || newLines.length > 0) {
+        const oldText = oldLines.length > 0 ? oldLines.join('\n') : '(rien)';
+        const newText = newLines.length > 0 ? newLines.join('\n') : '(supprimé)';
+
         return {
-            old: oldLines.length > 0 ? oldLines.join('\n') : '(rien)',
-            new: newLines.length > 0 ? newLines.join('\n') : '(supprimé)'
+            old: oldText,
+            new: newText,
+            oldHtml: highlightDifferences(oldText, newText, false),
+            newHtml: highlightDifferences(oldText, newText, true)
         };
     }
 
     return null;
+}
+
+function highlightDifferences(oldText, newText, isNew) {
+    if (oldText === '(rien)' || newText === '(supprimé)') {
+        return escapeHtml(isNew ? newText : oldText);
+    }
+
+    const text = isNew ? newText : oldText;
+    const other = isNew ? oldText : newText;
+
+    const words1 = text.split(/(\s+|[(),{}\[\];:])/);
+    const words2 = other.split(/(\s+|[(),{}\[\];:])/);
+
+    let result = '';
+    words1.forEach(word => {
+        if (!words2.includes(word) && word.trim().length > 0 && !/^\s+$/.test(word)) {
+            result += `<span style="background: ${isNew ? '#90EE90' : '#FFB6B6'}; font-weight: 600;">${escapeHtml(word)}</span>`;
+        } else {
+            result += escapeHtml(word);
+        }
+    });
+
+    return result;
 }
 
 function renderDiffSideBySide(patch, fromVersion, toVersion) {
@@ -1391,6 +1480,7 @@ function setupAnalyticsListeners() {
     document.getElementById('timelineRange').addEventListener('change', loadTimelineGraph);
 
     // Module Analytics
+    document.getElementById('moduleAnalyticsRepo').addEventListener('change', onModuleAnalyticsRepoChange);
     document.getElementById('moduleAnalyticsBranch').addEventListener('change', loadModuleAnalytics);
 
     // Detected Changes
@@ -1400,22 +1490,65 @@ function setupAnalyticsListeners() {
     // Populate timeline repo select and branches
     loadRepositories().then(() => {
         const timelineSelect = document.getElementById('timelineRepo');
+        const moduleAnalyticsRepo = document.getElementById('moduleAnalyticsRepo');
         const repoSelect = document.getElementById('repoSelect');
-        timelineSelect.innerHTML = repoSelect.innerHTML;
+        const timelineOptions = state.repositories.map(repo => `<option value="${repo.id}">${repo.full_name}</option>`).join('');
+        timelineSelect.innerHTML = '<option value="">Sélectionner un dépôt...</option>' + timelineOptions;
+        moduleAnalyticsRepo.innerHTML = repoSelect.innerHTML;
     });
 
     loadMigrationVersions().then(() => {
-        const moduleAnalyticsBranch = document.getElementById('moduleAnalyticsBranch');
         const detectedChangesBranch = document.getElementById('detectedChangesBranch');
         const fromVersionSelect = document.getElementById('migrationFromVersion');
 
-        if (fromVersionSelect && moduleAnalyticsBranch) {
-            moduleAnalyticsBranch.innerHTML = fromVersionSelect.innerHTML;
-        }
         if (fromVersionSelect && detectedChangesBranch) {
             detectedChangesBranch.innerHTML = fromVersionSelect.innerHTML;
         }
     });
+}
+
+async function onModuleAnalyticsRepoChange() {
+    const repoId = document.getElementById('moduleAnalyticsRepo').value;
+    const branchSelect = document.getElementById('moduleAnalyticsBranch');
+
+    if (!repoId) {
+        branchSelect.disabled = true;
+        branchSelect.innerHTML = '<option value="">Sélectionner...</option>';
+        document.getElementById('moduleAnalytics').innerHTML = '<p class="info-text">Sélectionnez un dépôt et une branche</p>';
+        return;
+    }
+
+    if (repoId === 'all') {
+        try {
+            const reposResponse = await fetch(`${API_BASE_URL}/repositories`);
+            const repos = await reposResponse.json();
+
+            const allBranches = new Set();
+            for (const repo of repos) {
+                const branchesResponse = await fetch(`${API_BASE_URL}/repositories/${repo.id}/branches`);
+                const branches = await branchesResponse.json();
+                branches.forEach(b => allBranches.add(b.name));
+            }
+
+            branchSelect.innerHTML = '<option value="">Sélectionner...</option>' +
+                Array.from(allBranches).map(name => `<option value="all:${name}">${name}</option>`).join('');
+            branchSelect.disabled = false;
+        } catch (error) {
+            console.error('Erreur lors du chargement des branches:', error);
+        }
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/repositories/${repoId}/branches`);
+        const branches = await response.json();
+
+        branchSelect.innerHTML = '<option value="">Sélectionner...</option>' +
+            branches.map(branch => `<option value="${branch.name}">${branch.name}</option>`).join('');
+        branchSelect.disabled = false;
+    } catch (error) {
+        console.error('Erreur lors du chargement des branches:', error);
+    }
 }
 
 async function onTimelineRepoChange() {
@@ -1522,12 +1655,16 @@ function displayTimelineGraph(data) {
 }
 
 async function loadModuleAnalytics() {
-    const branch = document.getElementById('moduleAnalyticsBranch').value;
+    let branch = document.getElementById('moduleAnalyticsBranch').value;
     const analyticsDiv = document.getElementById('moduleAnalytics');
 
     if (!branch) {
         analyticsDiv.innerHTML = '<p class="info-text">Sélectionnez une branche</p>';
         return;
+    }
+
+    if (branch.startsWith('all:')) {
+        branch = branch.substring(4);
     }
 
     analyticsDiv.innerHTML = '<p class="loading">Chargement...</p>';

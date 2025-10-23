@@ -78,7 +78,7 @@
                     <div class="filter-group">
                         <label>Dépôt</label>
                         <select id="repoSelect">
-                            <option value="">Sélectionner...</option>
+                            <option value="all" selected>Tous les dépôts</option>
                         </select>
                     </div>
                     <div class="filter-group">
@@ -143,6 +143,7 @@
                         <label>Dépôt</label>
                         <select id="compareRepoSelect">
                             <option value="">Sélectionner...</option>
+                            <option value="all">Tous les dépôts</option>
                         </select>
                     </div>
                 </div>
@@ -230,6 +231,11 @@
                         </select>
                     </div>
                 </div>
+                <div style="text-align: center; margin-top: 15px;">
+                    <button onclick="searchMigrationChanges()" class="btn" style="padding: 12px 40px; font-size: 1rem;">
+                        🔍 Rechercher
+                    </button>
+                </div>
             </div>
 
             <div id="migrationResults">
@@ -286,11 +292,23 @@
                 <div class="filters">
                     <div class="filter-row">
                         <div class="filter-group">
+                            <label>Dépôt</label>
+                            <select id="moduleAnalyticsRepo">
+                                <option value="">Sélectionner...</option>
+                                <option value="all">Tous les dépôts</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
                             <label>Branche</label>
-                            <select id="moduleAnalyticsBranch">
+                            <select id="moduleAnalyticsBranch" disabled>
                                 <option value="">Sélectionner...</option>
                             </select>
                         </div>
+                    </div>
+                    <div style="text-align: center; margin-top: 10px;">
+                        <button onclick="loadModuleAnalytics()" class="btn" style="padding: 8px 20px;">
+                            📊 Charger l'analyse
+                        </button>
                     </div>
                 </div>
                 <div id="moduleAnalytics" class="module-analytics"></div>

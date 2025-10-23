@@ -159,6 +159,71 @@ def get_branches(repo_id: int):
     finally:
         conn.close()
 
+@app.get("/commits/all", response_model=List[Commit])
+def get_all_commits(
+    branch_name: str,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    author: Optional[str] = None,
+    search: Optional[str] = None,
+    module: Optional[str] = None
+):
+    """Liste les commits de tous les dépôts pour une branche donnée"""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            if module:
+                query = """
+                    SELECT DISTINCT c.id, c.sha, c.message, c.author_name, c.author_email, c.committed_date,
+                           c.additions, c.deletions, c.total_changes, c.is_merge, c.html_url
+                    FROM odoo_devlog.commits c
+                    INNER JOIN odoo_devlog.branches b ON c.branch_id = b.id
+                    INNER JOIN odoo_devlog.file_changes fc ON fc.commit_id = c.id
+                    WHERE b.name = %s
+                      AND (fc.filename LIKE %s OR fc.filename LIKE %s OR fc.filename LIKE %s)
+                """
+                params = [branch_name, f'addons/{module}/%', f'odoo/addons/{module}/%', f'{module}/%']
+            else:
+                query = """
+                    SELECT c.id, c.sha, c.message, c.author_name, c.author_email, c.committed_date,
+                           c.additions, c.deletions, c.total_changes, c.is_merge, c.html_url
+                    FROM odoo_devlog.commits c
+                    INNER JOIN odoo_devlog.branches b ON c.branch_id = b.id
+                    WHERE b.name = %s
+                """
+                params = [branch_name]
+
+            if author:
+                query += " AND c.author_name ILIKE %s"
+                params.append(f"%{author}%")
+
+            if search:
+                query += " AND c.message ILIKE %s"
+                params.append(f"%{search}%")
+
+            query += " ORDER BY c.committed_date DESC LIMIT %s OFFSET %s;"
+            params.extend([limit, offset])
+
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            return [
+                Commit(
+                    id=row[0],
+                    sha=row[1],
+                    message=row[2],
+                    author_name=row[3],
+                    author_email=row[4],
+                    committed_date=row[5],
+                    additions=row[6],
+                    deletions=row[7],
+                    total_changes=row[8],
+                    is_merge=row[9],
+                    html_url=row[10]
+                ) for row in rows
+            ]
+    finally:
+        conn.close()
+
 @app.get("/branches/{branch_id}/commits", response_model=List[Commit])
 def get_commits(
     branch_id: int,
@@ -273,6 +338,113 @@ def get_commit_detail(commit_id: int):
                     } for f in files
                 ]
             )
+    finally:
+        conn.close()
+
+@app.get("/compare/all")
+def compare_all_branches(
+    branch1: str = Query(..., description="Nom de la première branche"),
+    branch2: str = Query(..., description="Nom de la deuxième branche"),
+    limit: int = Query(500, ge=1, le=5000)
+):
+    """Compare deux branches sur tous les dépôts"""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT sha, message, author_name, committed_date, additions, deletions
+                FROM odoo_devlog.commits c
+                INNER JOIN odoo_devlog.branches b ON c.branch_id = b.id
+                WHERE b.name = %s
+                  AND sha NOT IN (
+                      SELECT c2.sha FROM odoo_devlog.commits c2
+                      INNER JOIN odoo_devlog.branches b2 ON c2.branch_id = b2.id
+                      WHERE b2.name = %s
+                  )
+                ORDER BY committed_date DESC
+                LIMIT %s;
+            """, (branch1, branch2, limit))
+            only_in_branch1 = cur.fetchall()
+
+            cur.execute("""
+                SELECT sha, message, author_name, committed_date, additions, deletions
+                FROM odoo_devlog.commits c
+                INNER JOIN odoo_devlog.branches b ON c.branch_id = b.id
+                WHERE b.name = %s
+                  AND sha NOT IN (
+                      SELECT c2.sha FROM odoo_devlog.commits c2
+                      INNER JOIN odoo_devlog.branches b2 ON c2.branch_id = b2.id
+                      WHERE b2.name = %s
+                  )
+                ORDER BY committed_date DESC
+                LIMIT %s;
+            """, (branch2, branch1, limit))
+            only_in_branch2 = cur.fetchall()
+
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(additions) as total_additions,
+                    SUM(deletions) as total_deletions,
+                    COUNT(DISTINCT author_name) as unique_authors
+                FROM odoo_devlog.commits c
+                INNER JOIN odoo_devlog.branches b ON c.branch_id = b.id
+                WHERE b.name = %s;
+            """, (branch1,))
+            stats_b1 = cur.fetchone()
+
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(additions) as total_additions,
+                    SUM(deletions) as total_deletions,
+                    COUNT(DISTINCT author_name) as unique_authors
+                FROM odoo_devlog.commits c
+                INNER JOIN odoo_devlog.branches b ON c.branch_id = b.id
+                WHERE b.name = %s;
+            """, (branch2,))
+            stats_b2 = cur.fetchone()
+
+            return {
+                "branch1": {
+                    "name": branch1,
+                    "stats": {
+                        "total_commits": stats_b1[0],
+                        "total_additions": stats_b1[1] or 0,
+                        "total_deletions": stats_b1[2] or 0,
+                        "unique_authors": stats_b1[3]
+                    },
+                    "unique_commits": [
+                        {
+                            "sha": c[0],
+                            "message": c[1],
+                            "author": c[2],
+                            "date": c[3].isoformat() if c[3] else None,
+                            "additions": c[4],
+                            "deletions": c[5]
+                        } for c in only_in_branch1
+                    ]
+                },
+                "branch2": {
+                    "name": branch2,
+                    "stats": {
+                        "total_commits": stats_b2[0],
+                        "total_additions": stats_b2[1] or 0,
+                        "total_deletions": stats_b2[2] or 0,
+                        "unique_authors": stats_b2[3]
+                    },
+                    "unique_commits": [
+                        {
+                            "sha": c[0],
+                            "message": c[1],
+                            "author": c[2],
+                            "date": c[3].isoformat() if c[3] else None,
+                            "additions": c[4],
+                            "deletions": c[5]
+                        } for c in only_in_branch2
+                    ]
+                }
+            }
     finally:
         conn.close()
 
@@ -462,29 +634,12 @@ def search_migration_changes(
     use_regex: bool = Query(False, description="Use regex search"),
     limit: int = Query(100, ge=1, le=500)
 ):
-    """Recherche les changements entre deux versions"""
+    """Recherche les changements entre deux versions avec support module"""
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            # Trouver les branches
-            cur.execute("""
-                SELECT b1.id as from_branch_id, b2.id as to_branch_id, b1.repo_id
-                FROM odoo_devlog.branches b1
-                JOIN odoo_devlog.branches b2 ON b1.repo_id = b2.repo_id
-                WHERE b1.name = %s AND b2.name = %s
-                LIMIT 1;
-            """, (from_version, to_version))
-
-            branch_result = cur.fetchone()
-            if not branch_result:
-                return {"results": [], "message": "Branches non trouvées"}
-
-            from_branch_id, to_branch_id, repo_id = branch_result
-
-            # Rechercher dans les file_changes avec le patch
-            # Utiliser LIKE pour recherche normale, ou ~ pour regex (PostgreSQL)
             search_operator = "~*" if use_regex else "LIKE"
-            search_term = term if use_regex else f'%{term}%'
+            search_term = term if use_regex else f'%{term.lower()}%'
 
             query = f"""
                 SELECT DISTINCT
@@ -495,12 +650,12 @@ def search_migration_changes(
                 FROM odoo_devlog.commits c
                 INNER JOIN odoo_devlog.branches b ON c.branch_id = b.id
                 INNER JOIN odoo_devlog.file_changes fc ON fc.commit_id = c.id
-                WHERE (c.branch_id = %s OR c.branch_id = %s)
+                WHERE b.name IN (%s, %s)
                   AND fc.patch IS NOT NULL
-                  AND {"fc.patch" if use_regex else "LOWER(fc.patch)"} {search_operator} {"%s" if use_regex else "LOWER(%s)"}
+                  AND {"fc.patch" if use_regex else "LOWER(fc.patch)"} {search_operator} %s
             """
 
-            params = [from_branch_id, to_branch_id, search_term]
+            params = [from_version, to_version, search_term]
 
             if module:
                 query += " AND (fc.filename LIKE %s OR fc.filename LIKE %s OR fc.filename LIKE %s OR fc.filename LIKE %s)"
@@ -649,7 +804,8 @@ def get_timeline(
 def get_module_analytics(
     branch_name: str = Query(..., description="Branch name (e.g., 17.0)")
 ):
-    """Retourne les statistiques par module pour une branche"""
+    """Retourne les statistiques par module pour une branche donnée"""
+    print(f"=== MODULE ANALYTICS CALLED WITH branch_name={branch_name} ===")
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -664,9 +820,9 @@ def get_module_analytics(
                 MAX(c.committed_date) as last_modified
             FROM odoo_devlog.modules m
             INNER JOIN odoo_devlog.file_changes fc ON (
-                fc.filename LIKE 'addons/' || m.name || '/%'
-                OR fc.filename LIKE 'odoo/addons/' || m.name || '/%'
-                OR fc.filename LIKE m.name || '/%'
+                fc.filename LIKE CONCAT('addons/', m.name, '/%%')
+                OR fc.filename LIKE CONCAT('odoo/addons/', m.name, '/%%')
+                OR fc.filename LIKE CONCAT(m.name, '/%%')
             )
             INNER JOIN odoo_devlog.commits c ON c.id = fc.commit_id
             INNER JOIN odoo_devlog.branches b ON b.id = c.branch_id
@@ -682,6 +838,9 @@ def get_module_analytics(
 
         results = []
         for row in rows:
+            if len(row) < 6:
+                print(f"ERROR: Row has {len(row)} columns instead of 6: {row}")
+                continue
             results.append({
                 "module": row[0],
                 "commits": row[1],
@@ -700,6 +859,8 @@ def get_module_analytics(
         }
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/analytics/detected-changes")
